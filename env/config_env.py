@@ -10,11 +10,11 @@
 COST = 0.0004             # taxa de corretagem (~0.04%)
 SLIP = 0.0003             # slippage médio (~0.03%)
 CUSTO_TRADE = COST + SLIP # custo total efetivo por operação
-ALOCACAO = 0.8            # porcentagem do capital usada por trade
+ALOCACAO = 0.9            # porcentagem do capital usada por trade
 CAPITAL_INICIAL = 1_000.0 # capital inicial simbiótico
 
 # ==== 🎯 Metas de retorno e horizonte ====
-TARGET_RET = 0.004        # alvo de retorno base (0.4%)
+TARGET_RET = 0.003        # alvo de retorno base (0.4%)
 H_FUTURO = 3              # horizonte preditivo curto (3 candles)
 MIN_STEPS = 400           # mínimo de steps por episódio
 

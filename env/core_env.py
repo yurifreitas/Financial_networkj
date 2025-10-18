@@ -17,7 +17,7 @@ from .config_env import (
 from .persistence_env import load_best_score, save_best_score
 
 PERSIST_PATH = "metrics_history.jsonl"   # histórico incremental longo
-FALENCIA_HARD = 200.0                    # limiar absoluto secundário
+FALENCIA_HARD = 400.0                    # limiar absoluto secundário
 VOL_WIN = 64                             # janela p/ vol local
 DD_WIN = 2048                            # janela p/ drawdown local
 
