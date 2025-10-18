@@ -1,6 +1,3 @@
-// =========================================
-// 🤖 RobotStatus.tsx — versão expandida
-// =========================================
 import React from "react";
 
 export default function RobotStatus({ tick }: { tick: any }) {

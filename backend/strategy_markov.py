@@ -7,7 +7,7 @@
 
 import numpy as np
 
-LIMIAR_ENTRADA = 0.003   # 0.8%
+LIMIAR_ENTRADA = 0.002   # 0.8%
 LIMIAR_SAIDA   = 0.0015   # 0.4%
 LIMIAR_CONFIANCA = 0.49  # 55% dos caminhos positivos já é suficiente
 

@@ -106,13 +106,7 @@ export default function App() {
             <Chart dados={data} />
           </div>
 
-          {/* 🔮 Previsões futuras (MarkovForecast) */}
-          <div className="bg-white/5 rounded-2xl p-6 shadow-xl border border-gray-800 backdrop-blur-md hover:bg-white/10 transition-all">
-            <h2 className="text-xl font-semibold mb-3 text-cyan-300">
-              Previsões Futuras (Rede Markoviana)
-            </h2>
-            <MarkovForecast />
-          </div>
+        
         </div>
       </main>
 
