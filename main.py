@@ -1,12 +1,6 @@
 # =========================================================
-# 🌌 EtherSym Finance — main.py (simbiótico + replay priorizado)
+# 🌌 EtherSym Finance — main.py (DQN + Regressão de Preço)
 # =========================================================
-# - Double DQN + N-Step + AMP + Prioritized Replay + IS weights
-# - Poda + Regeneração + Homeostase
-# - Início aleatório (uniforme/volatility)
-# - Logs apenas ao fim de cada episódio
-# =========================================================
-
 import os, time, random, torch
 from torch.amp import GradScaler, autocast
 import torch.nn.functional as F
@@ -15,233 +9,138 @@ import numpy as np, pandas as pd
 from config import SAVE_PATH, MEMORIA_MAX, EPSILON_INICIAL, GAMMA, BATCH
 from network import criar_modelo
 from memory import salvar_estado, carregar_estado, RingReplay, NStepBuffer
-from env import Env, make_feats, START_MODE
+from env import Env, make_feats, START_MODE, TARGET_RET
 
-# =========================================================
-# ⚙️ Hiperparâmetros principais
-# =========================================================
 CSV = "binance_BTC_USDT_1h_2y.csv"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ACTION_SPACE = np.array([-1, 0, 1], dtype=np.int8)
-LIMIAR = 0.003              # precisão exigida (0.3%)
-RESTART_EQUITY = 0.85
+LIMIAR = 0.003
 EPSILON_DECAY, EPSILON_MIN = 0.9985, 0.05
 TARGET_TAU, TARGET_SYNC_HARD = 0.005, 10_000
 LOG_INTERVAL = 500
 AUTOSAVE_EVERY = 120
 N_STEP, MIN_REPLAY, ACTION_REPEAT = 3, 4096, 1
-PODA_INTERVAL = 20_000
-PODA_LIMIAR_BASE = 0.002
 
-STATE_DIM = 10  # 8 features + (pos, a_prev)
+STATE_DIM = 10
+LAMBDA_REG = 0.3               # peso da regressão de preço
+Y_CLAMP = 0.02                  # clamp em ±2% para estabilizar
 
 def a_to_idx(a: int) -> int:
-    return int(a + 1)
+    return int(a + 1)          # {-1,0,1} -> {0,1,2}
 
-# =========================================================
-# 🎯 Política (ε-greedy + softmax temperado)
-# =========================================================
 @torch.no_grad()
 def escolher_acao(modelo, s, eps):
     if random.random() < eps:
         return int(np.random.choice(ACTION_SPACE))
     x = torch.tensor(s, dtype=torch.float32, device=DEVICE).unsqueeze(0)
-    logits = modelo(x)
-    probs = torch.softmax(logits / 0.8, dim=1).squeeze(0).cpu().numpy()
+    q, _ = modelo(x)  # q: (1,3), y_pred ignorado aqui
+    probs = torch.softmax(q / 0.8, dim=1).squeeze(0).cpu().numpy()
     return int(np.random.choice(ACTION_SPACE, p=probs))
 
-# =========================================================
-# 📏 Métricas sniper
-# =========================================================
-def sniper_error(ret, a, limiar=LIMIAR):
-    if a == 0:
-        return abs(ret)
-    elif a == 1:
-        return max(0.0, limiar - ret)
-    else:
-        return max(0.0, limiar + ret)
-
-def is_hit(err, limiar=LIMIAR):
-    return err < limiar
-
-# =========================================================
-# 🚀 Loop principal
-# =========================================================
 def run():
     if not os.path.exists(CSV):
         raise FileNotFoundError(f"CSV não encontrado: {CSV}")
-
     df = pd.read_csv(CSV)
     base, price = make_feats(df)
     env = Env(base, price)
 
-    modelo, alvo, opt, loss_fn = criar_modelo(DEVICE)  # rede deve estar com state_dim=10
-    alvo.eval()
-    modelo.train(True)
-
-    # ✅ Replay priorizado (do memory.py aprimorado)
+    modelo, alvo, opt = criar_modelo(DEVICE)
     replay = RingReplay(state_dim=STATE_DIM, capacity=MEMORIA_MAX, device=DEVICE)
-    nbuf   = NStepBuffer(N_STEP, GAMMA)
-
-    # ✅ GradScaler moderno (sem FutureWarning)
+    nbuf = NStepBuffer(N_STEP, GAMMA)
     scaler = GradScaler("cuda", enabled=(DEVICE.type == "cuda"))
 
-    # carregar estado salvo
     _mem_legacy, EPSILON, media_antiga = carregar_estado(modelo, opt)
-    if EPSILON is None:
-        EPSILON = EPSILON_INICIAL
+    EPSILON = EPSILON or EPSILON_INICIAL
 
-    # métricas
-    total_steps = 0
-    melhor_streak = 0
-    acertos_total, erros_total = 0, 0
-    melhor_media = float(media_antiga or -1e9)
-    episode = 0
+    total_steps, episode = 0, 0
     autosave_t0 = time.time()
-    steps_desde_poda = 0
-
-    print(f"🧠 Iniciando treino simbiótico — modo START='{START_MODE}' — device={DEVICE.type}")
+    print(f"🧠 Iniciando treino simbiótico híbrido (preço + ação) | START='{START_MODE}' | device={DEVICE.type}")
 
     while True:
         episode += 1
         s = env.reset()
-
-        # t_init robusto
-        t_init = int(getattr(env, "last_reset_t", getattr(env, "t", 0)))
-
-        done = False
-        total_reward_ep = 0.0
-        streak = 0
-        episode_acertos, episode_erros = 0, 0
+        done, total_reward_ep = False, 0.0
 
         while not done:
             total_steps += 1
-            steps_desde_poda += 1
 
-            # escolher ação
+            # política
             a = escolher_acao(modelo, s, EPSILON)
             sp, r, done_env, info = env.step(a, repeats=ACTION_REPEAT)
             total_reward_ep += r
 
-            # avaliar erro/acerto
-            ret = float(info.get("ret", 0.0))
-            err = sniper_error(ret, a, LIMIAR)
-            hit = is_hit(err, LIMIAR)
+            # salva retorno futuro real deste passo (alvo contínuo)
+            y_ret = float(info.get("ret", 0.0))
 
-            if hit:
-                acertos_total += 1
-                episode_acertos += 1
-                streak += 1
-                if streak > melhor_streak:
-                    melhor_streak = streak
-            else:
-                erros_total += 1
-                episode_erros += 1
-                streak = 0
-
-            # N-step
-            nbuf.push(s, a, r)
-            flush = (len(nbuf.traj) == N_STEP) or (not hit) or done_env
+            # N-step com alvo contínuo
+            nbuf.push(s, a, r, y_ret)
+            flush = (len(nbuf.traj) == N_STEP) or done_env
             if flush:
-                item = nbuf.flush(sp, (not hit) or done_env)
+                item = nbuf.flush(sp, done_env)
                 if item is not None:
-                    s0, a0, Rn, sn, dn = item
-                    replay.append(s0, a_to_idx(a0), Rn, sn, float(dn))
+                    s0, a0, Rn, sn, dn, y0 = item
+                    replay.append(s0, a_to_idx(a0), Rn, sn, float(dn), y0)
 
             s = sp
+            done = done_env
 
-            # aprendizagem
+            # === aprendizagem simbiótica ===
             if len(replay) >= MIN_REPLAY:
-                # 🎯 amostra priorizada + pesos de importância
-                estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t, idx, w = replay.sample(BATCH)
+                (estados_t, acoes_t, recompensas_t, novos_estados_t,
+                 finais_t, idx, w, y_ret_t) = replay.sample(BATCH)
 
                 with torch.no_grad():
-                    next_online_q = modelo(novos_estados_t)
-                    next_actions  = torch.argmax(next_online_q, dim=1, keepdim=True)
-                    next_target_q = alvo(novos_estados_t).gather(1, next_actions).squeeze(1)
-                    alvo_q        = recompensas_t + (GAMMA ** N_STEP) * next_target_q * (1.0 - finais_t)
+                    next_q_online, _ = modelo(novos_estados_t)
+                    next_actions = torch.argmax(next_q_online, dim=1, keepdim=True)
+                    next_q_target, _ = alvo(novos_estados_t)
+                    next_best = next_q_target.gather(1, next_actions).squeeze(1)
+                    alvo_q = recompensas_t + (GAMMA ** N_STEP) * next_best * (1.0 - finais_t)
 
                 opt.zero_grad(set_to_none=True)
-                # perda por-amostra (para aplicar IS weights)
                 with autocast(device_type="cuda", enabled=(DEVICE.type == "cuda")):
-                    q_vals = modelo(estados_t).gather(1, acoes_t).squeeze(1)
-                    per_sample_loss = F.smooth_l1_loss(q_vals, alvo_q, reduction="none", beta=0.8)
-                    # aplica IS weights
-                    loss = (w * per_sample_loss).mean()
+                    q_vals, y_pred = modelo(estados_t)            # y_pred ∈ ℝ (retorno previsto)
+                    q_sel = q_vals.gather(1, acoes_t).squeeze(1)
 
-                scaler.scale(loss).backward()
+                    # RL (PER + IS)
+                    per_sample = F.smooth_l1_loss(q_sel, alvo_q, reduction="none", beta=0.8)
+                    loss_q = (w * per_sample).mean()
+
+                    # Regressão de preço/retorno — clamp do alvo para estabilidade
+                    y_target = y_ret_t.clamp_(-Y_CLAMP, Y_CLAMP)
+                    loss_reg = F.smooth_l1_loss(y_pred, y_target, beta=0.5)
+
+                    loss_total = loss_q + LAMBDA_REG * loss_reg
+
+                scaler.scale(loss_total).backward()
                 torch.nn.utils.clip_grad_norm_(modelo.parameters(), 1.0)
                 scaler.step(opt)
                 scaler.update()
 
-                # 🔁 atualiza prioridades com TD-error
                 with torch.no_grad():
-                    td_error = (alvo_q - q_vals).abs().detach().cpu().numpy()
-                replay.update_priority(idx, td_error)
-                replay.homeostase()
+                    td_error = (alvo_q - q_sel).abs().detach().cpu().numpy()
+                    replay.update_priority(idx, td_error)
 
-                # soft update
-                with torch.no_grad():
+                    # soft update alvo
                     for p_t, p in zip(alvo.parameters(), modelo.parameters()):
                         p_t.data.mul_(1.0 - TARGET_TAU).add_(TARGET_TAU * p.data)
 
-                # hard sync periódico
-                if total_steps % TARGET_SYNC_HARD == 0:
-                    alvo.load_state_dict(modelo.state_dict())
+                    # hard sync periódico (opcional)
+                    if total_steps % TARGET_SYNC_HARD == 0:
+                        alvo.load_state_dict(modelo.state_dict())
 
             # decaimento do ε
             EPSILON = max(EPSILON * EPSILON_DECAY, EPSILON_MIN)
 
-            # 🧬 Poda simbiótica periódica
-            if steps_desde_poda >= PODA_INTERVAL and len(replay) >= MIN_REPLAY:
-                try:
-                    taxa_poda = modelo.aplicar_poda(PODA_LIMIAR_BASE)
-                    modelo.regenerar_sinapses(taxa_poda)
-                    print(f"🌿 Poda simbiótica aplicada | taxa={taxa_poda:.3%}")
-                except Exception as e:
-                    print(f"⚠️ Erro na poda: {e}")
-                steps_desde_poda = 0
-
-            # condição de término (modo sniper)
-            if (not hit) or done_env or (info.get("eq", 1.0) < RESTART_EQUITY):
-                done = True
-
-            # autosave de fallback
-            if (time.time() - autosave_t0) > (AUTOSAVE_EVERY * 5):
+            # autosave de segurança
+            if (time.time() - autosave_t0) > AUTOSAVE_EVERY:
                 autosave_t0 = time.time()
                 salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
 
-        # =========================================================
-        # 🧩 Fim do episódio
-        # =========================================================
-        taxa_acerto_total = acertos_total / max(1, acertos_total + erros_total)
-        taxa_ep = episode_acertos / max(1, episode_acertos + episode_erros)
+            if done:
+                salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
+                print(f"🏁 Episódio {episode:4d} | Reward={total_reward_ep:+.3f} | ε={EPSILON:.3f}")
+                break
 
-        try:
-            modelo.verificar_homeostase(total_reward_ep)
-        except Exception:
-            pass
-
-        print("------------------------------------------------------------")
-        print(f"Episódio {episode:5d} | steps_total={total_steps:7d} | t_init={t_init:6d} | start_mode={START_MODE}")
-        print(f"Reward_ep={total_reward_ep:+.4f} | acertos_ep={episode_acertos} | erros_ep={episode_erros} | taxa_ep={taxa_ep*100:5.2f}%")
-        print(f"Streak={streak} | Melhor streak={melhor_streak} | taxa_total={taxa_acerto_total*100:5.2f}%")
-        print(f"ε={EPSILON:.3f} | memória={len(replay):d} | melhor_media={melhor_media:+.4f}")
-        print("Salvando estado no fim do episódio...")
-        salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
-        print("------------------------------------------------------------")
-
-        # salva se superou melhor média
-        if total_reward_ep > melhor_media:
-            melhor_media = total_reward_ep
-            print(f"🏆 Nova melhor média de episódio: {melhor_media:+.4f}")
-            salvar_estado(modelo, opt, replay, EPSILON, melhor_media)
-
-        time.sleep(0.05)
-
-# =========================================================
-# ▶️ Execução direta
-# =========================================================
 if __name__ == "__main__":
     run()

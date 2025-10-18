@@ -1,5 +1,5 @@
 # ==========================================
-# 🧠 EtherSym Finance — Rede Dueling DQN Simbiótica
+# 🧠 EtherSym Finance — Rede Dueling DQN + Regressão de Preço
 # ==========================================
 import torch
 import torch.nn as nn
@@ -7,9 +7,12 @@ import torch.optim as optim
 import numpy as np
 from config import LR
 
+
 class RedeAvancada(nn.Module):
     def __init__(self, state_dim=10, n_actions=3):
         super().__init__()
+
+        # === Backbone simbiótico ===
         self.fc1 = nn.Linear(state_dim, 128)
         self.norm1 = nn.LayerNorm(128)
         self.fc2 = nn.Linear(128, 64)
@@ -18,11 +21,15 @@ class RedeAvancada(nn.Module):
         self.act = nn.LeakyReLU(0.1)
         self.dropout = nn.Dropout(0.1)
 
-        # Dueling heads
+        # === Cabeças ===
+        # Valor e vantagem (dueling)
         self.val = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, 1))
         self.adv = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, n_actions))
 
-        # buffers simbióticos
+        # Nova cabeça: regressão de preço (retorno futuro contínuo)
+        self.reg = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, 1))
+
+        # Buffers simbióticos
         self.historico = []
         self.media_antiga = None
         self.estavel = 0
@@ -38,13 +45,17 @@ class RedeAvancada(nn.Module):
 
     def forward(self, x):
         x1 = self.act(self.norm1(self.fc1(x)))
-        s  = self.skip(x1)
+        s = self.skip(x1)
         x2 = self.act(self.norm2(self.fc2(x1))) + 0.2 * s
         if self.training:
             x2 = self.dropout(x2)
+
         v = self.val(x2)
         a = self.adv(x2)
-        return v + (a - a.mean(dim=1, keepdim=True))
+        y = self.reg(x2).squeeze(1)  # retorno/Δpreço previsto
+
+        q = v + (a - a.mean(dim=1, keepdim=True))
+        return q, y
 
     # 🌿 poda simbiótica
     def aplicar_poda(self, limiar_base=0.002):
@@ -95,10 +106,13 @@ class RedeAvancada(nn.Module):
                 if isinstance(m, nn.LayerNorm):
                     m.reset_parameters()
 
+
+# =========================================================
+# 🔧 Criação do modelo e otimizador
+# =========================================================
 def criar_modelo(device):
     modelo = RedeAvancada().to(device)
-    alvo   = RedeAvancada().to(device)
+    alvo = RedeAvancada().to(device)
     alvo.load_state_dict(modelo.state_dict())
-    loss_fn = nn.SmoothL1Loss(beta=0.8)
     opt = optim.AdamW(modelo.parameters(), lr=LR, weight_decay=1e-4, amsgrad=True)
-    return modelo, alvo, opt, loss_fn
+    return modelo, alvo, opt

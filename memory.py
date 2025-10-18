@@ -1,5 +1,5 @@
 # ==========================================
-# 💾 EtherSym Finance — Memory System (Prioritized + Homeostatic)
+# 💾 EtherSym Finance — Memory System (Prioritized + Homeostatic + Regressão)
 # ==========================================
 import os, torch, numpy as np
 from collections import deque
@@ -22,15 +22,19 @@ class RingReplay:
         self.r  = np.zeros((self.cap,), dtype=np.float32)
         self.sn = np.zeros((self.cap, state_dim), dtype=np.float32)
         self.d  = np.zeros((self.cap,), dtype=np.float32)
+        self.y  = np.zeros((self.cap,), dtype=np.float32)   # 🔮 alvo contínuo (ret_futuro)
 
         # prioridade simbiótica
         self.p  = np.ones((self.cap,), dtype=np.float32)
         self.alpha = alpha  # intensidade de priorização
         self.beta  = beta   # correção de viés de importância
 
-    def append(self, s, a_idx, r, sn, d):
+    # ------------------------------------------------------
+    # Adiciona uma nova transição (s, a, r, sn, done, y_ret)
+    # ------------------------------------------------------
+    def append(self, s, a_idx, r, sn, d, y_ret):
         i = self.idx
-        self.s[i], self.a[i, 0], self.r[i], self.sn[i], self.d[i] = s, a_idx, r, sn, d
+        self.s[i], self.a[i, 0], self.r[i], self.sn[i], self.d[i], self.y[i] = s, a_idx, r, sn, d, y_ret
         # prioridades recentes ganham destaque
         self.p[i] = abs(r) + 1e-3
         self.idx = (i + 1) % self.cap
@@ -40,8 +44,10 @@ class RingReplay:
     def __len__(self):
         return self.cap if self.full else self.idx
 
+    # ------------------------------------------------------
+    # Amostragem com priorização simbiótica e IS weights
+    # ------------------------------------------------------
     def sample(self, batch):
-        # pesos normalizados (prioridades simbióticas)
         p = self.p[:len(self)] ** self.alpha
         p /= p.sum()
 
@@ -54,19 +60,25 @@ class RingReplay:
         r  = torch.as_tensor(self.r[idx],  device=self.device)
         sn = torch.as_tensor(self.sn[idx], device=self.device)
         d  = torch.as_tensor(self.d[idx],  device=self.device)
+        y  = torch.as_tensor(self.y[idx],  device=self.device)  # 🔮 alvo contínuo
         w  = torch.as_tensor(w,            device=self.device, dtype=torch.float32)
-        return s, a, r, sn, d, idx, w
+        return s, a, r, sn, d, idx, w, y
 
+    # ------------------------------------------------------
+    # Atualiza prioridades conforme TD-error
+    # ------------------------------------------------------
     def update_priority(self, idx, td_error):
         self.p[idx] = np.clip(np.abs(td_error) + 1e-3, 1e-3, 10.0)
 
+    # ------------------------------------------------------
+    # Homeostase simbiótica (decadência lenta das prioridades)
+    # ------------------------------------------------------
     def homeostase(self):
-        """Reduz gradualmente a prioridade de amostras antigas."""
         self.p *= 0.9995
 
 
 # =========================================================
-# 🧩 N-Step Buffer (para reforço temporal simbiótico)
+# 🧩 N-Step Buffer (para reforço temporal + regressão)
 # =========================================================
 class NStepBuffer:
     def __init__(self, n, gamma):
@@ -74,16 +86,17 @@ class NStepBuffer:
         self.gamma = gamma
         self.traj = deque(maxlen=n)
 
-    def push(self, s, a, r):
-        self.traj.append((s, a, r))
+    # agora recebe o y_ret (retorno futuro real)
+    def push(self, s, a, r, y_ret):
+        self.traj.append((s, a, r, y_ret))
 
     def flush(self, sn, done):
         if not self.traj:
             return None
-        R = sum((self.gamma ** i) * float(r) for i, (_, _, r) in enumerate(self.traj))
-        s0, a0, _ = self.traj[0]
+        R = sum((self.gamma ** i) * float(r) for i, (_, _, r, _) in enumerate(self.traj))
+        s0, a0, _, y0 = self.traj[0]  # 🔮 y_ret do primeiro passo
         self.traj.clear()
-        return s0, a0, R, sn, done
+        return s0, a0, R, sn, done, y0
 
 
 # =========================================================
