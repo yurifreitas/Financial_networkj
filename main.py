@@ -1,13 +1,15 @@
 # =========================================================
-# 🌌 EtherSym Finance — main.py (modo simbiótico completo)
+# 🌌 EtherSym Finance — main.py (simbiótico + replay priorizado)
 # =========================================================
-# - Double DQN + N-Step + AMP + Poda + Regeneração + Homeostase
-# - Início aleatório (uniforme ou por volatilidade)
-# - Prints só ao fim de cada episódio
+# - Double DQN + N-Step + AMP + Prioritized Replay + IS weights
+# - Poda + Regeneração + Homeostase
+# - Início aleatório (uniforme/volatility)
+# - Logs apenas ao fim de cada episódio
 # =========================================================
 
 import os, time, random, torch
-from torch.amp import GradScaler, autocast   # ✅ AMP moderno
+from torch.amp import GradScaler, autocast
+import torch.nn.functional as F
 import numpy as np, pandas as pd
 
 from config import SAVE_PATH, MEMORIA_MAX, EPSILON_INICIAL, GAMMA, BATCH
@@ -32,7 +34,10 @@ N_STEP, MIN_REPLAY, ACTION_REPEAT = 3, 4096, 1
 PODA_INTERVAL = 20_000
 PODA_LIMIAR_BASE = 0.002
 
-def a_to_idx(a: int): return int(a + 1)
+STATE_DIM = 10  # 8 features + (pos, a_prev)
+
+def a_to_idx(a: int) -> int:
+    return int(a + 1)
 
 # =========================================================
 # 🎯 Política (ε-greedy + softmax temperado)
@@ -71,11 +76,12 @@ def run():
     base, price = make_feats(df)
     env = Env(base, price)
 
-    modelo, alvo, opt, loss_fn = criar_modelo(DEVICE)
+    modelo, alvo, opt, loss_fn = criar_modelo(DEVICE)  # rede deve estar com state_dim=10
     alvo.eval()
     modelo.train(True)
 
-    replay = RingReplay(state_dim=10, capacity=MEMORIA_MAX, device=DEVICE)
+    # ✅ Replay priorizado (do memory.py aprimorado)
+    replay = RingReplay(state_dim=STATE_DIM, capacity=MEMORIA_MAX, device=DEVICE)
     nbuf   = NStepBuffer(N_STEP, GAMMA)
 
     # ✅ GradScaler moderno (sem FutureWarning)
@@ -101,7 +107,7 @@ def run():
         episode += 1
         s = env.reset()
 
-        # ✅ t_init robusto: usa last_reset_t se existir, senão env.t
+        # t_init robusto
         t_init = int(getattr(env, "last_reset_t", getattr(env, "t", 0)))
 
         done = False
@@ -147,7 +153,8 @@ def run():
 
             # aprendizagem
             if len(replay) >= MIN_REPLAY:
-                estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t = replay.sample(BATCH)
+                # 🎯 amostra priorizada + pesos de importância
+                estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t, idx, w = replay.sample(BATCH)
 
                 with torch.no_grad():
                     next_online_q = modelo(novos_estados_t)
@@ -156,15 +163,23 @@ def run():
                     alvo_q        = recompensas_t + (GAMMA ** N_STEP) * next_target_q * (1.0 - finais_t)
 
                 opt.zero_grad(set_to_none=True)
-                # ✅ autocast moderno
+                # perda por-amostra (para aplicar IS weights)
                 with autocast(device_type="cuda", enabled=(DEVICE.type == "cuda")):
                     q_vals = modelo(estados_t).gather(1, acoes_t).squeeze(1)
-                    perda  = loss_fn(q_vals, alvo_q)
+                    per_sample_loss = F.smooth_l1_loss(q_vals, alvo_q, reduction="none", beta=0.8)
+                    # aplica IS weights
+                    loss = (w * per_sample_loss).mean()
 
-                scaler.scale(perda).backward()
+                scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(modelo.parameters(), 1.0)
                 scaler.step(opt)
                 scaler.update()
+
+                # 🔁 atualiza prioridades com TD-error
+                with torch.no_grad():
+                    td_error = (alvo_q - q_vals).abs().detach().cpu().numpy()
+                replay.update_priority(idx, td_error)
+                replay.homeostase()
 
                 # soft update
                 with torch.no_grad():
@@ -188,7 +203,7 @@ def run():
                     print(f"⚠️ Erro na poda: {e}")
                 steps_desde_poda = 0
 
-            # condição de término
+            # condição de término (modo sniper)
             if (not hit) or done_env or (info.get("eq", 1.0) < RESTART_EQUITY):
                 done = True
 
