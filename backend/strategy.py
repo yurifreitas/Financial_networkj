@@ -11,23 +11,32 @@ class EstrategiaVariacao:
 
     def aplicar(self, pred):
         ret = pred["retorno_pred"]
+
         # ======== 1. Sem posição aberta ========
         if self.posicao == 0:
             if ret >= LIMIAR_ENTRADA:
                 self.posicao = +1
-                return +1  # 📈 entrar comprado
+                return "comprar"   # 📈 entrar comprado
             elif ret <= -LIMIAR_ENTRADA:
                 self.posicao = -1
-                return -1  # 📉 entrar vendido
+                return "vender"    # 📉 entrar vendido
             else:
-                return 0  # nada a fazer
+                return "neutro"
 
-        # ======== 2. Posição aberta ========
-        if self.posicao == +1 and ret < LIMIAR_SAIDA:
-            self.posicao = 0
-            return 0  # 🟡 sair da compra
-        if self.posicao == -1 and ret > -LIMIAR_SAIDA:
-            self.posicao = 0
-            return 0  # 🟡 sair da venda
+        # ======== 2. Posição comprada ========
+        if self.posicao == +1:
+            if ret < LIMIAR_SAIDA:
+                self.posicao = 0
+                return "sair"      # 🟡 sair da compra
+            else:
+                return "manter_compra"
 
-        return self.posicao
+        # ======== 3. Posição vendida ========
+        if self.posicao == -1:
+            if ret > -LIMIAR_SAIDA:
+                self.posicao = 0
+                return "sair"      # 🟡 sair da venda
+            else:
+                return "manter_venda"
+
+        return "neutro"

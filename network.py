@@ -1,13 +1,21 @@
 # ==========================================
-# 🧠 EtherSym Finance — Rede Dueling DQN + Regressão de Preço
+# 🧠 EtherSym Finance — Rede Dueling DQN + Regressão de Preço (Avançada)
 # ==========================================
+# - Cabeças duplas: Ações discretas (Q-values) + Retorno contínuo (regressão)
+# - Poda, regeneração e homeostase simbiótica
+# - Compatível com main.py (lr, torch.compile, AdamW)
+# - Estrutura viva: autoestabiliza e se adapta ao longo do treino
+# ==========================================
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from config import LR
 
 
+# =========================================================
+# 🧩 Núcleo da rede simbiótica
+# =========================================================
 class RedeAvancada(nn.Module):
     def __init__(self, state_dim=10, n_actions=3):
         super().__init__()
@@ -26,10 +34,10 @@ class RedeAvancada(nn.Module):
         self.val = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, 1))
         self.adv = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, n_actions))
 
-        # Nova cabeça: regressão de preço (retorno futuro contínuo)
+        # Nova cabeça: regressão contínua de retorno
         self.reg = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, 1))
 
-        # Buffers simbióticos
+        # Buffers simbióticos internos
         self.historico = []
         self.media_antiga = None
         self.estavel = 0
@@ -37,12 +45,18 @@ class RedeAvancada(nn.Module):
 
         self._init_weights()
 
+    # -----------------------------
+    # ⚙️ Inicialização simbiótica
+    # -----------------------------
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0.01)
 
+    # -----------------------------
+    # 🔮 Forward simbiótico
+    # -----------------------------
     def forward(self, x):
         x1 = self.act(self.norm1(self.fc1(x)))
         s = self.skip(x1)
@@ -52,12 +66,20 @@ class RedeAvancada(nn.Module):
 
         v = self.val(x2)
         a = self.adv(x2)
-        y = self.reg(x2).squeeze(1)  # retorno/Δpreço previsto
+        y_lin = self.reg(x2).squeeze(1)
+        # 🔒 bound na cabeça de regressão (evita explosões)
+        # Y_CLAMP vem do main (ex.: 0.02). Ajuste aqui se desejar fixar outro valor.
+        y = torch.tanh(y_lin)
+
+
 
         q = v + (a - a.mean(dim=1, keepdim=True))
         return q, y
 
-    # 🌿 poda simbiótica
+
+    # -----------------------------
+    # 🌿 Poda simbiótica
+    # -----------------------------
     def aplicar_poda(self, limiar_base=0.002):
         total = sum(p.numel() for p in self.parameters())
         podadas = 0
@@ -68,9 +90,12 @@ class RedeAvancada(nn.Module):
                     mask = p.abs() > limiar
                     podadas += torch.numel(p) - mask.sum().item()
                     p.mul_(mask)
-        return podadas / total
+        taxa = podadas / total
+        return taxa
 
-    # 🧬 regeneração simbiótica
+    # -----------------------------
+    # 🧬 Regeneração simbiótica
+    # -----------------------------
     def regenerar_sinapses(self, taxa_poda):
         if taxa_poda > 0.15:
             with torch.no_grad():
@@ -81,7 +106,9 @@ class RedeAvancada(nn.Module):
                         novos = torch.randn_like(p) * (var.sqrt() * 0.5)
                         p.add_(mask.float() * novos)
 
-    # ⚖️ homeostase simbiótica
+    # -----------------------------
+    # ⚖️ Homeostase simbiótica
+    # -----------------------------
     def verificar_homeostase(self, media):
         if media is None:
             return
@@ -97,6 +124,9 @@ class RedeAvancada(nn.Module):
                 self.estavel = 0
         self.media_antiga = m
 
+    # -----------------------------
+    # 🧠 Reset de normas e pesos leves
+    # -----------------------------
     def _reset_norms(self):
         with torch.no_grad():
             for n, p in self.named_parameters():
@@ -108,11 +138,21 @@ class RedeAvancada(nn.Module):
 
 
 # =========================================================
-# 🔧 Criação do modelo e otimizador
+# 🔧 Criação e otimização simbiótica
 # =========================================================
-def criar_modelo(device):
+def criar_modelo(device, lr=1e-4):
     modelo = RedeAvancada().to(device)
     alvo = RedeAvancada().to(device)
     alvo.load_state_dict(modelo.state_dict())
-    opt = optim.AdamW(modelo.parameters(), lr=LR, weight_decay=1e-4, amsgrad=True)
+
+    # otimizador simbiótico (AdamW com AMSGrad)
+    opt = optim.AdamW(modelo.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+
+    # compilação (modo turbo)
+    try:
+        modelo = torch.compile(modelo)
+        alvo = torch.compile(alvo)
+    except Exception as e:
+        print(f"[WARN] torch.compile desativado: {e}")
+
     return modelo, alvo, opt

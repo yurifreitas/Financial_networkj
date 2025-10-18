@@ -1,5 +1,5 @@
 # =========================================================
-# 🌌 EtherSym Finance — Backend WebSocket (corrigido)
+# 🌌 EtherSym Finance — Backend WebSocket (corrigido e estável)
 # =========================================================
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,8 @@ from backend.binance_feed import get_recent_candles
 from backend.predictor import prever_tendencia
 from backend.markov_predictor import rede_markoviana
 from backend.strategy import EstrategiaVariacao
-import asyncio, json, datetime, pandas as pd, numpy as np
+from backend.simulador_realtime import simulador
+import asyncio, json, datetime, pandas as pd, numpy as np, torch
 
 # =========================================================
 # 🚀 Inicialização do app e middleware
@@ -25,6 +26,7 @@ app.add_middleware(
 # 🧠 Modelos e estratégias
 # =========================================================
 modelo = carregar_modelo()
+modelo_lock = asyncio.Lock()  # 🔒 para evitar conflitos simultâneos
 estrategia = EstrategiaVariacao()
 
 # =========================================================
@@ -40,6 +42,7 @@ def safe_json(data):
         return str(o)
     return json.dumps(data, default=convert)
 
+
 # =========================================================
 # 🔮 Socket de Tendência (predição contínua)
 # =========================================================
@@ -50,10 +53,11 @@ async def tendencia_socket(ws: WebSocket):
 
     try:
         while True:
-            df = get_recent_candles(limit=120)
-            pred = prever_tendencia(modelo, df)
-            sinal = estrategia.aplicar(pred)
+            async with modelo_lock:  # evita corrida de GPU
+                df = get_recent_candles(limit=120)
+                pred = prever_tendencia(modelo, df)
 
+            sinal = estrategia.aplicar(pred)
             msg = {
                 "tempo": datetime.datetime.utcnow().isoformat(),
                 "preco": float(pred.get("preco", 0)),
@@ -64,19 +68,15 @@ async def tendencia_socket(ws: WebSocket):
             }
 
             await ws.send_text(safe_json(msg))
-            await asyncio.sleep(60)  # atualiza a cada 1 minuto
+            await asyncio.sleep(60)  # atualiza a cada 1 min
 
     except WebSocketDisconnect:
         print("🔌 Cliente desconectado de /ws/tendencia")
-    except asyncio.CancelledError:
-        print("⚠️ Loop /ws/tendencia cancelado (provável shutdown ou reload).")
     except Exception as e:
-        print(f"❌ Erro inesperado em /ws/tendencia: {e}")
+        print(f"❌ Erro em /ws/tendencia: {e}")
     finally:
-        try:
-            await ws.close()
-        except Exception:
-            pass
+        await ws.close()
+
 
 # =========================================================
 # 🔁 Socket Markov (rede preditiva com bifurcações)
@@ -88,34 +88,38 @@ async def markov_socket(ws: WebSocket):
 
     try:
         while True:
-            df = get_recent_candles(limit=120)
-            df_prev = rede_markoviana(modelo, df, profundidade=6, bifurcacoes=3)
-            data = df_prev.to_dict(orient="records")
+            async with modelo_lock:
+                df = get_recent_candles(limit=400)
+                df_prev = rede_markoviana(modelo, df, profundidade=6, bifurcacoes=3)
 
+            data = df_prev.to_dict(orient="records")
             await ws.send_text(safe_json(data))
-            await asyncio.sleep(300)  # a cada 5 minutos
+            await asyncio.sleep(300)  # 5 min
 
     except WebSocketDisconnect:
         print("🔌 Cliente desconectado de /ws/markov")
-    except asyncio.CancelledError:
-        print("⚠️ Loop /ws/markov cancelado (provável shutdown ou reload).")
     except Exception as e:
-        print(f"❌ Erro inesperado em /ws/markov: {e}")
+        print(f"❌ Erro em /ws/markov: {e}")
     finally:
-        try:
-            await ws.close()
-        except Exception:
-            pass
-from backend.simulador_realtime import simulador
+        await ws.close()
 
+
+# =========================================================
+# 🤖 Socket do Robô (simulação simbiótica completa)
+# =========================================================
 @app.websocket("/ws/robo")
 async def robo_socket(ws: WebSocket):
     await ws.accept()
     print("🤖 Cliente conectado: /ws/robo")
+
     try:
         while True:
             dado = await simulador.tick()
-            await ws.send_text(json.dumps(dado))
-            await asyncio.sleep(60)  # 1 tick/minuto
+            await ws.send_text(safe_json(dado))
+            await asyncio.sleep(60)
     except WebSocketDisconnect:
         print("❌ Cliente desconectado de /ws/robo")
+    except Exception as e:
+        print(f"❌ Erro em /ws/robo: {e}")
+    finally:
+        await ws.close()
