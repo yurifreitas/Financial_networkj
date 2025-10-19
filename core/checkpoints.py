@@ -19,7 +19,7 @@ def check_vitoria(patrimonio, best_global, modelo, opt, replay, EPSILON, total_r
     Se o patrimônio atingir um fator simbiótico (ex.: 4.5x o capital inicial),
     salva o estado completo do modelo e atualiza o patrimônio global.
     """
-    FATOR_VITORIA = 4.5
+    FATOR_VITORIA = 1.5
     if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
         print(f"\n🏆 Vitória simbiótica | patrimônio={patrimonio:.2f} ({FATOR_VITORIA}x)")
         salvar_patrimonio_global(patrimonio)

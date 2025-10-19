@@ -4,7 +4,7 @@
 import os, torch, numpy as np
 from collections import deque
 from config import SAVE_PATH, MEMORIA_MAX, EPSILON_INICIAL
-
+import logging
 # =========================================================
 # ♻️ Replay Memory (Ring Buffer com priorização simbiótica robusta)
 # =========================================================
@@ -154,15 +154,15 @@ def salvar_estado(modelo, opt, replay, eps, media, path=None):
             "media": float(media or 0),
         }, tmp_path)
         os.replace(tmp_path, path)
-        print(f"💾 Estado salvo com sucesso em {path}")
+        logging.info(f"💾 Estado salvo com sucesso em {path}")
     except Exception as e:
-        print(f"⚠️ Erro ao salvar estado: {e}")
+        logging.info(f"⚠️ Erro ao salvar estado: {e}")
 
 
 def carregar_estado(modelo, opt, path=None, state_dim=10):
     path = path or SAVE_PATH
     if not os.path.exists(path):
-        print("⚙️ Nenhum estado salvo encontrado, iniciando do zero.")
+        logging.info("⚙️ Nenhum estado salvo encontrado, iniciando do zero.")
         return RingReplay(state_dim, device="cpu"), EPSILON_INICIAL, 0.0
 
     try:
@@ -173,10 +173,10 @@ def carregar_estado(modelo, opt, path=None, state_dim=10):
 
         eps = float(data.get("eps", EPSILON_INICIAL))
         media = float(data.get("media", 0.0))
-        print(f"♻️ Estado carregado | ε={eps:.3f} | média={media:+.3f}")
+        logging.info(f"♻️ Estado carregado | ε={eps:.3f} | média={media:+.3f}")
         return RingReplay(state_dim, device="cpu"), eps, media
 
     except Exception as e:
-        print(f"⚠️ Erro ao carregar estado ({type(e).__name__}): {e}")
-        print("🔄 Reiniciando do zero (arquivo pode estar corrompido).")
+        logging.info(f"⚠️ Erro ao carregar estado ({type(e).__name__}): {e}")
+        logging.info("🔄 Reiniciando do zero (arquivo pode estar corrompido).")
         return RingReplay(state_dim, device="cpu"), EPSILON_INICIAL, 0.0

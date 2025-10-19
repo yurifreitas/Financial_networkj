@@ -4,6 +4,7 @@
 import os, json, time
 import numpy as np
 import random
+import logging
 from .config_env import (
     COST, SLIP, CUSTO_TRADE, ALOCACAO, CAPITAL_INICIAL,
     TARGET_RET, H_FUTURO, MIN_STEPS,
@@ -89,7 +90,7 @@ class Env:
         self.acertos = 0
         self.erros = 0
 
-        print(f"♻ Reset simbiótico em t={self.t} | energia={self.energia:.2f}")
+        logging.info(f"♻ Reset simbiótico em t={self.t} | energia={self.energia:.2f}")
         return self.obs(0)
 
     # =====================================================
@@ -161,7 +162,7 @@ class Env:
                 self.capital += receita
                 self.pos = 0.0
                 self.preco_entrada = None
-                print(f"🚫 Stop loss | {variacao*100:.2f}% | cap={self.capital:.2f}")
+                logging.info(f"🚫 Stop loss | {variacao*100:.2f}% | cap={self.capital:.2f}")
                 self.energia -= ENERGIA_PENALTY * 0.5
                 self.erros += 1
                 self.trades_lose += 1
@@ -174,7 +175,7 @@ class Env:
                 self.capital += receita
                 self.pos = 0.0
                 self.preco_entrada = None
-                print(f"💰 Take profit | {variacao*100:.2f}% | cap={self.capital:.2f}")
+                logging.info(f"💰 Take profit | {variacao*100:.2f}% | cap={self.capital:.2f}")
                 self.energia += ENERGIA_BONUS * 0.8
                 self.acertos += 1
                 self.trades_win += 1
@@ -241,10 +242,10 @@ class Env:
                 # =====================================================
         # 🏆 Condição de Vitória — Patrimônio Duplicado
         # =====================================================
-        FATOR_VITORIA = 4.5  # dobra o capital inicial
+        FATOR_VITORIA = 1.5  # dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
-            print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")
+            logging.info(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")
 
             vitoria_data = {
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -264,9 +265,9 @@ class Env:
                 os.makedirs("runs", exist_ok=True)
                 with open(f"runs/vitoria_ep{self.episodios + 1}_{int(time.time())}.json", "w") as f:
                     json.dump(vitoria_data, f, indent=2)
-                print("💾 Vitória simbiótica registrada em runs/")
+                logging.info("💾 Vitória simbiótica registrada em runs/")
             except Exception as e:
-                print(f"[WARN] Falha ao salvar vitória simbiótica: {e}")
+                logging.info(f"[WARN] Falha ao salvar vitória simbiótica: {e}")
 
         # falência “hard” só permite fim após MIN_STEPS; também respeita limite absoluto
         if (self.steps >= MIN_STEPS and patrimonio <= ENERGIA_LIMITE * CAPITAL_INICIAL) or (patrimonio <= FALENCIA_HARD):
@@ -311,12 +312,13 @@ class Env:
             self.metrics_buffer.append(registro)
             # salva a cada 5 episódios
             if len(self.metrics_buffer) >= 5:
-                self._persist_metrics()
+                import threading
+                threading.Thread(target=self._persist_metrics, daemon=True).start()
 
             if self.pontuacao > self.best_score:
                 self.best_score = self.pontuacao
                 save_best_score(self.best_score)
-                print(f"🏆 Novo recorde simbiótico: {self.best_score:.1f} pontos!")
+                logging.info(f"🏆 Novo recorde simbiótico: {self.best_score:.1f} pontos!")
 
                 # =====================================================
                 # 💾 Registro simbiótico global completo
@@ -339,9 +341,9 @@ class Env:
                 try:
                     with open("recorde_maximo.json", "w") as f:
                         json.dump(recorde_data, f, indent=2)
-                    print("💾 Recorde global simbiótico salvo em recorde_maximo.json")
+                    logging.info("💾 Recorde global simbiótico salvo em recorde_maximo.json")
                 except Exception as e:
-                    print(f"[WARN] Falha ao salvar recorde_maximo: {e}")
+                    logging.info(f"[WARN] Falha ao salvar recorde_maximo: {e}")
 
 
             # reset “completo”
@@ -394,5 +396,8 @@ class Env:
         with open(PERSIST_PATH, "a") as f:
             for rec in self.metrics_buffer:
                 f.write(json.dumps(rec) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         self.metrics_buffer.clear()
-        print(f"🧩 {count} pétricas salvas em {PERSIST_PATH}")
+        logging.info(f"🧩 {count} pétricas salvas em {PERSIST_PATH}")
+

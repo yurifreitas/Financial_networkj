@@ -1,36 +1,46 @@
 # =========================================================
-# 🎯 EtherSym Finance — core/collector.py
+# 🎯 EtherSym Finance — core/collector.py (versão otimizada)
 # =========================================================
 # - Coleta uma etapa de experiência simbiótica
-# - Usa o estado vindo do main e retorna o próximo
+# - Move tensores para GPU de forma estável
+# - Minimiza recompilações do modelo entre episódios
 # =========================================================
 
+import torch
 from core.utils import escolher_acao, a_to_idx
 
+# =========================================================
+# 🚀 Coletor simbiótico
+# =========================================================
 def collect_step(env, modelo, device, eps_now, replay, nbuf, total_reward_ep):
     """
-    Executa uma etapa no ambiente simbiótico e registra as transições no replay buffer.
-    Compatível com Env completo (sem .state).
+    Executa uma etapa no ambiente simbiótico e registra transições no replay buffer.
+    Compatível com Env completo (sem .state persistente).
     """
-    # 📥 Obtém estado atual (mantido no loop principal)
-    # → O main passa sempre `s`, vindo do reset() ou step()
+    # 📥 Estado atual
     s_cur = getattr(env, "current_state", None)
     if s_cur is None:
         s_cur = env.reset()
 
-    # 🎯 Escolhe ação simbiótica
+    # 🔁 Converte para tensor GPU fixo (shape constante)
+    if not torch.is_tensor(s_cur):
+        s_cur_t = torch.tensor(s_cur, dtype=torch.float32, device=device).unsqueeze(0)
+    else:
+        s_cur_t = s_cur.to(device, non_blocking=True).unsqueeze(0)
+
+    # 🎯 Escolha simbiótica da ação (no device)
     a, conf = escolher_acao(
-        modelo, s_cur, device,
+        modelo, s_cur_t, device,
         eps_now,
         getattr(env, "capital", 0.0),
         getattr(env, "pos", 0.0)
     )
 
-    # 🚀 Executa o passo no ambiente
+    # 🚀 Passo no ambiente
     sp, r, done, info = env.step(a)
     total_reward_ep += r
 
-    # 💾 Registra a transição N-step
+    # 💾 Transição N-Step
     y_ret = float(info.get("ret", 0.0))
     nbuf.push(s_cur, a, r, y_ret)
     if len(nbuf.traj) == nbuf.n or done:
@@ -39,7 +49,6 @@ def collect_step(env, modelo, device, eps_now, replay, nbuf, total_reward_ep):
             s0, a0, Rn, sn, dn, y0 = item
             replay.append(s0, a_to_idx(a0), Rn, sn, float(dn), y0)
 
-    # 🔁 Atualiza o estado atual para o próximo ciclo
+    # 🔁 Atualiza o estado
     env.current_state = sp
-
     return sp, done, info, total_reward_ep

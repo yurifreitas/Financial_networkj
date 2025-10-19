@@ -1,67 +1,71 @@
 # =========================================================
-# 🌿 EtherSym Finance — core/maintenance.py
+# 🌿 EtherSym Finance — core/maintenance.py (GPU-safe)
 # =========================================================
-# - Poda simbiótica adaptativa
-# - Regeneração e homeostase
-# - Compatível com main_v8f_full e network.py
-# - Também trata a homeostase do replay
+# - Poda, regeneração e homeostase simbiótica otimizadas
+# - Totalmente assíncronas, sem .item() nem .cpu() dentro do loop
 # =========================================================
 
-import torch
-import numpy as np
+import torch, numpy as np
 
 # =========================================================
-# 🌿 Poda simbiótica adaptativa
+# 🌿 Poda simbiótica GPU-safe adaptativa
 # =========================================================
+@torch.no_grad()
 def aplicar_poda(modelo, limiar_base=0.002):
     """
-    Remove pesos muito pequenos (próximos de zero) de forma adaptativa.
-    Mantém a rede enxuta, evitando saturação e explosão de gradientes.
+    Remove pesos muito pequenos (|w| < limiar adaptativo) de forma
+    totalmente GPU-safe (sem .item dentro do loop).
+    Retorna taxa de poda global.
     """
-    total = sum(p.numel() for p in modelo.parameters())
-    podadas = 0
+    total_params = torch.zeros(1, device="cuda")
+    total_podados = torch.zeros(1, device="cuda")
 
-    with torch.no_grad():
-        for n, p in modelo.named_parameters():
-            if "weight" in n:
-                # limiar adaptativo com fator de escala dependente da média
-                limiar = limiar_base * (1 + p.abs().mean().item() * 5)
-                mask = p.abs() > limiar
-                podadas += torch.numel(p) - mask.sum().item()
-                p.mul_(mask)
+    for n, p in modelo.named_parameters():
+        if "weight" not in n or not p.requires_grad:
+            continue
 
-    taxa = podadas / total if total > 0 else 0.0
+        # média e limiar calculados inteiramente em GPU
+        limiar = limiar_base * (1 + p.abs().mean() * 5)
+        mask = (p.abs() > limiar)
+        total_params += p.numel()
+        total_podados += (p.numel() - mask.sum())
+        p.mul_(mask)  # zera pesos pequenos in-place
+
+    taxa = (total_podados / total_params).detach().to("cpu", non_blocking=True).item()
     return taxa
 
 
 # =========================================================
-# 🧬 Regeneração simbiótica (neurogênese controlada)
+# 🧬 Regeneração simbiótica GPU-safe
 # =========================================================
+@torch.no_grad()
 def regenerar_sinapses(modelo, taxa_poda, limiar_regen=0.15, taxa_regen=0.03):
     """
-    Regenera sinapses perdidas quando a taxa de poda é alta.
-    Pequenas porcentagens de pesos são reinicializadas para
-    reintroduzir diversidade e plasticidade simbiótica.
+    Reinicializa uma pequena fração de pesos quando há poda alta.
+    Operações todas na GPU; nada de sincronização CPU.
     """
-    if taxa_poda > limiar_regen:
-        with torch.no_grad():
-            for n, p in modelo.named_parameters():
-                if "weight" in n:
-                    var = torch.var(p)
-                    mask = torch.rand_like(p) < taxa_regen
-                    novos = torch.randn_like(p) * (var.sqrt() * 0.5)
-                    p.add_(mask.float() * novos)
-        print(f"🧬 Regeneração simbiótica ativada | taxa_poda={taxa_poda:.3f}")
+    if taxa_poda <= limiar_regen:
+        return
+
+    for n, p in modelo.named_parameters():
+        if "weight" not in n or not p.requires_grad:
+            continue
+
+        var = torch.var(p)
+        mask = torch.rand_like(p) < taxa_regen
+        novos = torch.randn_like(p) * (var.sqrt() * 0.5)
+        p.add_(mask * novos)
+
+    print(f"🧬 Regeneração simbiótica ativada | taxa_poda={taxa_poda:.3f}")
 
 
 # =========================================================
-# ⚖️ Homeostase simbiótica (autoestabilização)
+# ⚖️ Homeostase simbiótica (autoestabilização leve)
 # =========================================================
 def verificar_homeostase(modelo, media):
     """
-    Mantém o equilíbrio dinâmico da rede simbiótica.
-    Reinicia levemente os parâmetros normalizados quando a
-    variação média de perda fica muito baixa (rede estabilizada).
+    Mantém estabilidade simbiótica com histórico médio de perda.
+    Atua sem interferir no fluxo GPU principal.
     """
     if media is None:
         return
@@ -81,7 +85,6 @@ def verificar_homeostase(modelo, media):
         delta = abs(m - modelo.media_antiga)
         modelo.estavel = modelo.estavel + 1 if delta < modelo.limiar_homeostase else 0
 
-        # Se a rede estabilizou demais, aplica leve perturbação simbiótica
         if modelo.estavel >= 15:
             _reset_norms(modelo)
             modelo.estavel = 0
@@ -90,20 +93,16 @@ def verificar_homeostase(modelo, media):
 
 
 # =========================================================
-# 🧠 Reset leve de normas e pesos
+# 🧠 Reset leve de normas e pesos (GPU-safe)
 # =========================================================
+@torch.no_grad()
 def _reset_norms(modelo):
-    """
-    Perturba levemente os pesos e reinicializa LayerNorms
-    para evitar que a rede entre em estado morto.
-    """
-    with torch.no_grad():
-        for n, p in modelo.named_parameters():
-            if "weight" in n:
-                p.add_(torch.randn_like(p) * 0.02)
-        for m in modelo.modules():
-            if isinstance(m, torch.nn.LayerNorm):
-                m.reset_parameters()
+    for n, p in modelo.named_parameters():
+        if "weight" in n:
+            p.add_(torch.randn_like(p) * 0.02)
+    for m in modelo.modules():
+        if isinstance(m, torch.nn.LayerNorm):
+            m.reset_parameters()
 
 
 # =========================================================
@@ -111,16 +110,15 @@ def _reset_norms(modelo):
 # =========================================================
 def homeostase_replay(replay):
     """
-    Reajusta prioridades e pesos do replay buffer para
-    evitar concentração de amostras antigas.
+    Normaliza prioridades do replay sem travar o treino.
     """
     try:
-        if hasattr(replay, "prioridades"):
-            p = replay.prioridades
+        if hasattr(replay, "p"):
+            p = replay.p
             if isinstance(p, np.ndarray):
                 p = np.nan_to_num(p, nan=1.0)
                 p /= np.max(p) + 1e-9
-                replay.prioridades = np.clip(p, 1e-3, 1.0)
+                replay.p = np.clip(p, 1e-3, 1.0)
                 print("♻️ Homeostase simbiótica aplicada ao replay buffer")
     except Exception as e:
         print(f"[WARN] homeostase_replay falhou: {e}")
