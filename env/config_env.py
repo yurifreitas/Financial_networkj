@@ -35,9 +35,9 @@ CYCLE_AT_END = True           # recicla dataset no final (loop contínuo)
 BEST_SCORE_FILE = "best_score.json"
 
 # ==== 📈 Stops e limites globais (valores padrão, usados em core_env) ====
-STOP_LOSS_PCT = 0.12         # perda máxima 8%
-TAKE_PROFIT_PCT = 0.05        # ganho alvo 12%
-HOLD_MIN = 3                  # número mínimo de candles antes de stop/take
+STOP_LOSS_PCT = 0.10         # perda máxima 8%
+TAKE_PROFIT_PCT = 0.03        # ganho alvo 12%
+HOLD_MIN = 2                  # número mínimo de candles antes de stop/take
 
 # ==== ⚡ Ajustes simbióticos extras (opcional) ====
 ENERGIA_RECOMPENSA_SCALING = 0.5  # influência da energia nas recompensas

@@ -22,10 +22,7 @@ from core.utils import escolher_acao, soft_update, set_lr, is_bad_number,a_to_id
 from core.losses import loss_q_hibrida, loss_regressao
 from core.patrimonio import carregar_patrimonio_global, salvar_patrimonio_global
 from core.hyperparams import *
-
-# =========================================================
-# 🚀 Setup
-# =========================================================
+from core.config import turbo_cuda, reseed
 if not os.path.exists(CSV):
     raise FileNotFoundError(f"CSV não encontrado: {CSV}")
 
@@ -33,7 +30,8 @@ df = pd.read_csv(CSV)
 base, price = make_feats(df)
 env = Env(base, price)
 modelo, alvo, opt = criar_modelo(DEVICE, lr=LR)
-
+turbo_cuda()
+reseed(SEED)
 replay = RingReplay(state_dim=base.shape[1] + 2, capacity=MEMORIA_MAX, device=DEVICE)
 nbuf = NStepBuffer(N_STEP, GAMMA)
 scaler = GradScaler("cuda", enabled=AMP)
@@ -46,24 +44,9 @@ EPSILON = EPSILON_SAVED if EPSILON_SAVED is not None else EPSILON_INICIAL
 
 print(f"🧠 Iniciando treino simbiótico | device={DEVICE.type}")
 
-total_steps, episodio = 0, 0
-last_loss, last_y_pred = 0.0, 0.0
-temp_now, beta_per = TEMP_INI, BETA_PER_INI
-ema_q, ema_r = None, None
-cooldown_until = 0
-rollbacks = 0
-last_good = None
-
-# =================================================
-# 💾 Carregar patrimônio global persistente
-# =================================================
 best_global = carregar_patrimonio_global()
 print(f"🏁 Patrimônio global inicial carregado: {best_global:.2f}")
 
-
-# =========================================================
-# 🎮 Loop principal
-# =========================================================
 while True:
     episodio += 1
     s = env.reset()
@@ -114,7 +97,7 @@ while True:
         # 🏆 Regra de Vitória Simbiótica — Patrimônio Duplicado
         # =================================================
 
-        FATOR_VITORIA = 2.5  # fator de multiplicação do capital inicial
+        FATOR_VITORIA = 4.5  # fator de multiplicação do capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             print(
                 f"\n🏆 Vitória simbiótica no episódio {episodio:04d} | "

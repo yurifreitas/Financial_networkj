@@ -17,7 +17,7 @@ from .config_env import (
 from .persistence_env import load_best_score, save_best_score
 
 PERSIST_PATH = "metrics_history.jsonl"   # histórico incremental longo
-FALENCIA_HARD = 400.0                    # limiar absoluto secundário
+FALENCIA_HARD = 500.0                    # limiar absoluto secundário
 VOL_WIN = 64                             # janela p/ vol local
 DD_WIN = 2048                            # janela p/ drawdown local
 
@@ -40,7 +40,7 @@ class Env:
         self.b, self.p = base, price
         self.n = len(price)
 
-        self.window_min = 48
+        self.window_min = 20
         self.window_max = self.n - 800
 
         vol = np.abs(np.diff(self.p))
@@ -241,7 +241,7 @@ class Env:
                 # =====================================================
         # 🏆 Condição de Vitória — Patrimônio Duplicado
         # =====================================================
-        FATOR_VITORIA = 2.5  # dobra o capital inicial
+        FATOR_VITORIA = 4.5  # dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")

@@ -8,10 +8,7 @@ def turbo_cuda():
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    try:
-        torch.set_num_threads(1)
-    except:
-        pass
+
 
 def reseed(seed=42):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)

@@ -1,21 +1,21 @@
 import torch, numpy as np
-from core.config import turbo_cuda, reseed
+
 # =========================================================
 # ⚙️ Hiperparâmetros principais
 # =========================================================
 CSV = "binance_BTC_USDT_1h_2y.csv"
-SEED = 42
+SEED = 64
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 AMP = (DEVICE.type == "cuda")
-turbo_cuda(); reseed(SEED)
+
 
 # Treino
-BATCH = 2056
+BATCH = 1024
 GAMMA = 0.995
 LR = 5e-5           # ↓ mais conservador para estabilidade
 LR_MIN = 1e-6
 LR_WARMUP_STEPS = 5_000
-N_STEP = 3
+N_STEP = 4
 
 # Replay / Epsilon / Temperatura
 MEMORIA_MAX = 250_000
@@ -39,7 +39,7 @@ ROLLBACK_EVERY = 2_000
 MAX_ROLLBACKS = 5
 
 # Logs / manutenção
-PRINT_EVERY = 400
+PRINT_EVERY = 800
 SAVE_EVERY = 10_000
 PODA_EVERY = 5_000
 HOMEOSTASE_EVERY = 2_000
@@ -50,7 +50,10 @@ CAPITAL_INICIAL = 1_000.0
 ACTION_SPACE = np.array([-1, 0, 1], dtype=np.int8)
 
 
-# Estado anti-explosão
+total_steps, episodio = 0, 0
+last_loss, last_y_pred = 0.0, 0.0
+temp_now, beta_per = TEMP_INI, BETA_PER_INI
+ema_q, ema_r = None, None
 cooldown_until = 0
 rollbacks = 0
-last_good = None   # snapshot periódico para rollback
+last_good = None
