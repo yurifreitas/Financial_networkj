@@ -153,7 +153,7 @@ class SimuladorReplay:
 if __name__ == "__main__":
     async def main():
         replay = SimuladorReplay(
-            "/home/yuri/Documents/code2/binance-model/binance_BTC_USDT_1h_2y.csv"
+            "/home/yuri/Documents/code2/binance-model/binance_BTC_USDT_1h_3d.csv"
         )
         await replay.executar()
 
