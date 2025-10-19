@@ -50,6 +50,10 @@ total_steps, episodio = 0, 0
 last_loss, last_y_pred = 0.0, 0.0
 temp_now, beta_per = TEMP_INI, BETA_PER_INI
 ema_q, ema_r = None, None
+cooldown_until = 0
+rollbacks = 0
+last_good = None
+
 # =================================================
 # 💾 Carregar patrimônio global persistente
 # =================================================
@@ -74,10 +78,9 @@ while True:
         total_steps += 1
         warmup = total_steps < 3_000
 
-        # Epsilon/temperatura/β
-        eps_now = 1.0 if warmup else max(EPSILON * EPSILON_DECAY, EPSILON_MIN)
         if len(replay) >= MIN_REPLAY:
-            EPSILON = eps_now
+            EPSILON = max(EPSILON * EPSILON_DECAY, EPSILON_MIN)
+        eps_now = 1.0 if warmup else EPSILON
 
         if not warmup:
             temp_now = max(TEMP_MIN, temp_now * TEMP_DECAY)
@@ -236,8 +239,10 @@ while True:
 
             else:
                 scaler.scale(loss_total).backward()
+                scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(modelo.parameters(), GRAD_CLIP)
-                scaler.step(opt); scaler.update()
+                scaler.step(opt)
+                scaler.update()
 
                 with torch.no_grad():
                     td_error = (alvo_q - q_sel).abs().clamp_(0, 5.0).detach().cpu().numpy()
