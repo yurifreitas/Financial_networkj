@@ -91,7 +91,8 @@ class SimuladorRobo:
             preco_previsto = float(df_prev["preco"].mean())
         else:
             preco_previsto = preco_atual  # fallback robusto
-
+        print(preco_previsto)
+        print(preco_atual)
         # média ponderada por probabilidade dos caminhos
         if not df_prev.empty and {"preco", "prob"}.issubset(df_prev.columns):
             # normaliza prob em cada t (segurança extra)
