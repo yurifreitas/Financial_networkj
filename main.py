@@ -17,6 +17,27 @@ from torch.amp import GradScaler, autocast
 from network import criar_modelo
 from env import Env, make_feats
 from memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
+import json
+
+PATRIMONIO_FILE = "patrimonio_global.json"
+
+def carregar_patrimonio_global():
+    if not os.path.exists(PATRIMONIO_FILE):
+        return 1000.0  # valor inicial padrão
+    try:
+        with open(PATRIMONIO_FILE, "r") as f:
+            data = json.load(f)
+        return float(data.get("best_global", 1000.0))
+    except Exception:
+        return 1000.0
+
+def salvar_patrimonio_global(valor):
+    try:
+        with open(PATRIMONIO_FILE, "w") as f:
+            json.dump({"best_global": float(valor)}, f, indent=2)
+        print(f"💾 Patrimônio global atualizado: {valor:.2f}")
+    except Exception as e:
+        print(f"[WARN] Falha ao salvar patrimônio global: {e}")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -90,7 +111,7 @@ AMP = (DEVICE.type == "cuda")
 turbo_cuda(); reseed(SEED)
 
 # Treino
-BATCH = 256
+BATCH = 2056
 GAMMA = 0.995
 LR = 5e-5           # ↓ mais conservador para estabilidade
 LR_MIN = 1e-6
@@ -158,10 +179,16 @@ EPSILON = EPSILON_SAVED if EPSILON_SAVED is not None else EPSILON_INICIAL
 
 print(f"🧠 Iniciando treino simbiótico | device={DEVICE.type}")
 
-total_steps, episodio, best_global = 0, 0, CAPITAL_INICIAL
+total_steps, episodio = 0, 0
 last_loss, last_y_pred = 0.0, 0.0
 temp_now, beta_per = TEMP_INI, BETA_PER_INI
 ema_q, ema_r = None, None
+# =================================================
+# 💾 Carregar patrimônio global persistente
+# =================================================
+best_global = carregar_patrimonio_global()
+print(f"🏁 Patrimônio global inicial carregado: {best_global:.2f}")
+
 
 # =========================================================
 # 🎮 Loop principal
@@ -213,6 +240,34 @@ while True:
         posicao = float(env.pos)
         y_ret = float(info.get("ret", 0.0))
         melhor_patrimonio_ep = max(melhor_patrimonio_ep, patrimonio)
+        # =================================================
+        # 🏆 Regra de Vitória Simbiótica — Patrimônio Duplicado
+        # =================================================
+
+        FATOR_VITORIA = 2.5  # fator de multiplicação do capital inicial
+        if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
+            print(
+                f"\n🏆 Vitória simbiótica no episódio {episodio:04d} | "
+                f"patrimônio={patrimonio:.2f} (>{FATOR_VITORIA}x) | "
+                f"energia={info.get('energia', 1.0):.2f}\n"
+            )
+
+            # 💾 Snapshot do modelo no momento da vitória
+            salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
+            print(f"💾 Estado salvo por vitória simbiótica | step={total_steps}")
+
+            # 🔄 Reset controlado do episódio
+            s = env.reset()
+            capital = CAPITAL_INICIAL
+            posicao = 0.0
+            max_patrimonio = CAPITAL_INICIAL
+            melhor_patrimonio_ep = CAPITAL_INICIAL
+            total_reward_ep = 0.0
+
+            # 🔚 Encerramento e reinício do episódio
+            done = True
+            continue
+
 
         nbuf.push(s_cur, a, r, y_ret)
         if len(nbuf.traj) == N_STEP or done_env:
@@ -358,18 +413,38 @@ while True:
             salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
             print(f"💾 Checkpoint salvo | step={total_steps}")
 
-        if melhor_patrimonio_ep > best_global and len(replay) >= MIN_REPLAY:
+        # =================================================
+        # 💾 Atualizar e salvar patrimônio global real
+        # =================================================
+        MARGEM_VITORIA = 0.01  # salva só se aumentar 1%
+        if melhor_patrimonio_ep > best_global * (1 + MARGEM_VITORIA) and len(replay) >= MIN_REPLAY:
             best_global = melhor_patrimonio_ep
+            salvar_patrimonio_global(best_global)
             salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
             print(f"🏆 Novo melhor patrimônio global={best_global:.2f} | step={total_steps}")
 
+        # =================================================
+        # 🔚 Encerramento do episódio e persistência total
+        # =================================================
         if done:
-            # fim do episódio
+            # salva sempre ao encerrar o episódio (mesmo sem recorde)
+            salvar_patrimonio_global(best_global)
+
+            # reinicia o ambiente preservando progresso global
             s = env.reset()
+            env.capital = best_global
+
             if capital <= 1.0:
                 best_global = max(best_global, max_patrimonio)
+                salvar_patrimonio_global(best_global)
                 print(
                     f"\n💀 Falência simbiótica | cap_final={capital:.2f} | "
                     f"melhor_global={best_global:.2f} | ε={EPSILON:.3f}\n"
                 )
+            else:
+                print(
+                    f"\n🔁 Episódio {episodio:04d} finalizado | cap_final={capital:.2f} | "
+                    f"melhor_global={best_global:.2f}\n"
+                )
             break
+

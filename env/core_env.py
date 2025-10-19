@@ -238,6 +238,35 @@ class Env:
 
         # === CONDIÇÕES DE TÉRMINO ===
         done_env = False
+                # =====================================================
+        # 🏆 Condição de Vitória — Patrimônio Duplicado
+        # =====================================================
+        FATOR_VITORIA = 2.5  # dobra o capital inicial
+        if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
+            done_env = True
+            print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")
+
+            vitoria_data = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "episodio": int(self.episodios + 1),
+                "capital_final": float(self.capital),
+                "patrimonio_final": float(patrimonio),
+                "max_patrimonio": float(self.max_patrimonio),
+                "energia_final": float(self.energia),
+                "pontuacao": float(self.pontuacao),
+                "taxa_acerto": float(self.acertos / max(1, (self.acertos + self.erros))),
+                "trades_win": int(self.trades_win),
+                "trades_lose": int(self.trades_lose),
+                "trades_total": int(self.trades_total)
+            }
+
+            try:
+                os.makedirs("runs", exist_ok=True)
+                with open(f"runs/vitoria_ep{self.episodios + 1}_{int(time.time())}.json", "w") as f:
+                    json.dump(vitoria_data, f, indent=2)
+                print("💾 Vitória simbiótica registrada em runs/")
+            except Exception as e:
+                print(f"[WARN] Falha ao salvar vitória simbiótica: {e}")
 
         # falência “hard” só permite fim após MIN_STEPS; também respeita limite absoluto
         if (self.steps >= MIN_STEPS and patrimonio <= ENERGIA_LIMITE * CAPITAL_INICIAL) or (patrimonio <= FALENCIA_HARD):
