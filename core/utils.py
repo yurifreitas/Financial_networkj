@@ -34,4 +34,16 @@ def set_lr(optim, lr):
 
 def is_bad_number(x):
     return torch.isnan(x).any() or torch.isinf(x).any()
-def a_to_idx(a: int): return int(a + 1)
+import numpy as np
+
+def a_to_idx(a):
+    """
+    Converte ação simbiótica (-1, 0, 1) em índice (0, 1, 2).
+    Compatível com escalares e arrays.
+    """
+    if isinstance(a, (list, tuple, np.ndarray)):
+        # vetor → desloca +1 e converte para int64
+        return (np.asarray(a, dtype=np.int64) + 1).astype(np.int64)
+    else:
+        # escalar → mantém comportamento original
+        return int(a + 1)

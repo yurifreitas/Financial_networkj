@@ -5,10 +5,12 @@ import os, random, warnings, torch, numpy as np
 # =========================================================
 def turbo_cuda():
     torch.set_float32_matmul_precision("high")
-    torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+    torch.set_num_threads(os.cpu_count())
+    torch.set_num_interop_threads(os.cpu_count() // 2)
 
 def reseed(seed=42):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
