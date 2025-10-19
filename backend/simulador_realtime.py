@@ -1,11 +1,11 @@
 # =========================================================
-# 🌌 EtherSym Finance — simulador_realtime.py (modo simbiótico completo)
+# 🌌 EtherSym Finance — simulador_realtime.py (modo simbiótico direto)
 # =========================================================
-# - Inclui preço previsto (rede markoviana) e ponderado por prob.
+# - Usa apenas a previsão direta da rede principal (sem Markov)
 # - Coerência simbiótica (energia × estabilidade preditiva)
 # - Reinício automático por patrimônio (falência realista)
 # - Histórico salvo em CSV (para análise futura)
-# - Integração direta com frontend via WebSocket /ws/robo (caller externo)
+# - Integração com frontend via WebSocket /ws/robo
 # =========================================================
 
 import os
@@ -15,19 +15,18 @@ import numpy as np
 import pandas as pd
 
 # 🔗 Importações internas do backend
-from backend.model_loader import carregar_modelo
+from backend.loader.model_loader import carregar_modelo
 from backend.binance_feed import get_recent_candles
-from backend.predictor import prever_tendencia
-from backend.strategy_markov import EstrategiaVariacaoMarkovTurbo as EstrategiaVariacao
-from backend.markov_predictor import rede_markoviana
+from backend.predictors.predictor import prever_tendencia
+from backend.strategies.strategy import EstrategiaVariacao
 
 # =========================================================
 # ⚙️ Configurações gerais
 # =========================================================
-CAPITAL_INICIAL = 10000.0
+CAPITAL_INICIAL = 10_000.0
 ALOCACAO = 0.8
 CUSTO_TRADE = 0.0004           # taxa de execução simulada (0.04%)
-LIMIAR_PATRIMONIO = 2000.0     # falência simbiótica
+LIMIAR_PATRIMONIO = 2_000.0    # falência simbiótica
 SAVE_RUNS = True
 RUNS_DIR = "runs"
 
@@ -36,7 +35,7 @@ RUNS_DIR = "runs"
 # =========================================================
 class SimuladorRobo:
     def __init__(self):
-        # Carrega modelo preditivo e estratégia
+        # Carrega modelo preditivo e estratégia simbiótica
         self.modelo = carregar_modelo()
         self.estrategia = EstrategiaVariacao()
         self.episode = 1
@@ -48,7 +47,7 @@ class SimuladorRobo:
 
         if SAVE_RUNS:
             os.makedirs(RUNS_DIR, exist_ok=True)
-        print("🧠 Simulador simbiótico inicializado.")
+        print("🧠 Simulador simbiótico direto inicializado (sem Markov).")
 
     # =====================================================
     # 🔁 Reinício do episódio
@@ -73,45 +72,19 @@ class SimuladorRobo:
     # 🔮 Tick (loop principal da simulação)
     # =====================================================
     async def tick(self):
-        # Coleta candles recentes
+        # === 📡 Coleta candles recentes ===
         df = get_recent_candles(limit=120)
 
-        # Predição da rede (sem treino)
+        # === 🔮 Predição simbiótica direta ===
         pred = prever_tendencia(self.modelo, df)
-
-        # Árvores de futuros (Markov simbiótica)
-        df_prev = rede_markoviana(self.modelo, df, profundidade=5, bifurcacoes=3)
-
-        # ---------------------------
-        # 📈 Métricas preditivas
-        # ---------------------------
-        preco_atual = float(pred["preco"])
-
-        if not df_prev.empty and "preco" in df_prev.columns:
-            preco_previsto = float(df_prev["preco"].mean())
-        else:
-            preco_previsto = preco_atual  # fallback robusto
-        print(preco_previsto)
-        print(preco_atual)
-        # média ponderada por probabilidade dos caminhos
-        if not df_prev.empty and {"preco", "prob"}.issubset(df_prev.columns):
-            # normaliza prob em cada t (segurança extra)
-            df_norm = df_prev.copy()
-            prob_sum = df_norm.groupby("t")["prob"].transform(lambda s: s.sum() if s.sum() > 0 else 1.0)
-            df_norm["prob_norm"] = df_norm["prob"] / prob_sum
-            preco_previsto_ponderado = float((df_norm["preco"] * df_norm["prob_norm"]).groupby(df_norm["t"]).sum().mean())
-        else:
-            preco_previsto_ponderado = preco_previsto
-
-        # probabilidade de alta a partir dos caminhos
-        if not df_prev.empty and "ret" in df_prev.columns:
-            prob_alta = float((df_prev["ret"] > 0).mean())
-        else:
-            prob_alta = 0.5
-
+        preco_atual = float(pred.get("preco", df["close"].iloc[-1]))
+        preco_previsto = float(pred.get("preco_previsto", preco_atual))
         energia = float(pred.get("energia", 1.0))
         retorno_pred = float(pred.get("retorno_pred", 0.0))
-        acao_modelo = int(pred.get("acao_modelo", 0))
+        prob_actions = pred.get("prob_actions", [0.33, 0.33, 0.34])
+        prob_alta = float(prob_actions[2]) if isinstance(prob_actions, (list, np.ndarray)) else 0.5
+
+        # Coerência simbiótica (energia × estabilidade)
         coerencia = float((1.0 - abs(retorno_pred)) * energia)
 
         # ---------------------------
@@ -122,9 +95,8 @@ class SimuladorRobo:
 
         if sinal == "comprar" and self.posicao == 0:
             qtd = (self.capital * ALOCACAO) / preco_atual if preco_atual > 0 else 0.0
-            qtd = float(max(qtd, 0.0))
             self.capital -= self.capital * ALOCACAO
-            self.posicao = qtd
+            self.posicao = float(qtd)
             self.preco_entrada = preco_atual
             acao = "BUY"
             print(f"🟢 Compra simbiótica — {qtd:.5f} @ {preco_atual:.2f}")
@@ -152,12 +124,10 @@ class SimuladorRobo:
             "ep": int(self.episode),
             "tick": int(self.tick_idx),
             "tempo": agora_iso,
-            "tempo_execucao": agora_iso,         # opcional p/ RobotStatus "⏱ Última Execução"
             "preco": preco_atual,
-            "preco_previsto": preco_previsto,    # usado no Chart.tsx
-            "preco_previsto_ponderado": preco_previsto_ponderado,  # opcional extra
+            "preco_previsto": preco_previsto,
             "acao": acao or "-",
-            "acao_modelo": acao_modelo,
+            "acao_modelo": int(pred.get("acao_modelo", 0)),
             "capital": float(self.capital),
             "posicao": float(self.posicao),
             "preco_entrada": float(self.preco_entrada or 0.0),
@@ -169,13 +139,12 @@ class SimuladorRobo:
             "coerencia": coerencia,
         }
 
-        # Log humano
         print(
             f"[Ep {self.episode:03d} | Tick {self.tick_idx:05d}] "
-            f"Preço={preco_atual:.2f} | Prev(media)={preco_previsto:.2f} | "
-            f"Prev(pond)={preco_previsto_ponderado:.2f} | Ação={acao or '-':>4} | "
-            f"Patrimônio={patrimonio:.2f} | Δpred={retorno_pred:+.5f} | "
-            f"P(Alta)={prob_alta:.3f} | Enr={energia:.2f} | Coer={coerencia:.2f}"
+            f"Preço={preco_atual:.2f} | Prev={preco_previsto:.2f} | "
+            f"Ação={acao or '-':>4} | Patrimônio={patrimonio:.2f} | "
+            f"Δpred={retorno_pred:+.5f} | P(Alta)={prob_alta:.3f} | "
+            f"Enr={energia:.2f} | Coer={coerencia:.2f}"
         )
 
         self.historico.append(registro)
@@ -197,16 +166,13 @@ class SimuladorRobo:
 # =========================================================
 # 🚀 Execução contínua (loop infinito)
 # =========================================================
-simulador = SimuladorRobo()
-
 if __name__ == "__main__":
     async def main():
         robo = SimuladorRobo()
         while True:
             try:
                 _ = await robo.tick()
-                # aqui seu servidor WS externo pode ler o retorno
-                await asyncio.sleep(60)  # 1 tick/min
+                await asyncio.sleep(60)  # 1 tick/minuto
             except Exception as e:
                 print(f"[ERRO simbiótico] {e}")
                 await asyncio.sleep(5)

@@ -8,12 +8,11 @@
 
 import os, datetime, asyncio
 import pandas as pd
-import numpy as np
 
 # 🔗 Imports internos
-from backend.model_loader import carregar_modelo
-from backend.predictor import prever_tendencia
-from backend.strategy import EstrategiaVariacao
+from backend.loader.model_loader import carregar_modelo
+from backend.predictors.predictor import prever_tendencia
+from backend.strategies.strategy import EstrategiaVariacao
 
 # =========================================================
 # ⚙️ Configurações gerais do replay

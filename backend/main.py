@@ -3,12 +3,12 @@
 # =========================================================
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from backend.model_loader import carregar_modelo
+from backend.loader.model_loader import carregar_modelo
 from backend.binance_feed import get_recent_candles
-from backend.predictor import prever_tendencia
-from backend.strategy import EstrategiaVariacao
+from backend.predictors.predictor import prever_tendencia
+from backend.strategies.strategy import EstrategiaVariacao
 from backend.simulador_realtime import simulador
-import asyncio, json, datetime, pandas as pd, numpy as np, torch
+import asyncio, json, datetime, pandas as pd, numpy as np
 
 app = FastAPI()
 app.add_middleware(

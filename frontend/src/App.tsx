@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import Chart from "./components/Chart";
 import RobotStatus from "./components/RobotStatus";
 import TradeHistory from "./components/TradeHistory";
-import MarkovForecast from "./components/MarkovForecast";
 
 // ==========================
 // 🧠 Tipagem simbiótica do Tick
