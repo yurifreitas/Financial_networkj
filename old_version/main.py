@@ -1,9 +1,8 @@
 try:
     import torch._logging as _logging
-    _logging.set_logs()  # limpa logs simbióticos
+    _logging.set_logs()  # Limpa logs simbióticos
 except Exception:
     pass
-
 
 try:
     import torch._dynamo.config as dynamo_cfg
@@ -21,9 +20,9 @@ try:
     inductor_cfg.max_autotune = True
     inductor_cfg.max_autotune_pointwise = True
     inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
-
 except Exception as e:
     print(f"⚠️ Patch inductor parcial: {e}")
+
 import os, time, math, random, warnings
 import numpy as np, pandas as pd, torch
 import torch.nn.functional as F
@@ -32,6 +31,7 @@ from torch.amp import GradScaler, autocast
 from old_version.network import criar_modelo
 from env import Env, make_feats
 from old_version.memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
+
 # 🔐 Patch simbiótico estável
 # =========================================================
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -83,9 +83,9 @@ def escolher_acao(modelo, estado_np, device, eps,
     x = torch.tensor(estado_np, dtype=torch.float32, device=device).unsqueeze(0)
     with torch.no_grad():
         q_vals, y = modelo(x)
-        # confiança suave (sem saturar em 1.0 tão cedo)
+        # Confiança suave (sem saturar em 1.0 tão cedo)
         conf = float(torch.sigmoid(torch.abs(y)).item())
-        # temperatura vinculada ao epsilon
+        # Temperatura vinculada ao epsilon
         temp = max(temp_min, temp_base * (0.8 + 0.2 * (eps / max(1e-6, eps))))
         probs = torch.softmax(q_vals / temp, dim=1).squeeze(0).clamp_(1e-6, 1.0)
         probs = (probs / probs.sum()).cpu().numpy()
@@ -106,7 +106,7 @@ def is_bad_number(x):
 # ⚙️ Hiperparâmetros principais
 # =========================================================
 CSV = "binance_BTC_USDT_1h_2y.csv"
-SEED = 42
+SEED = 64
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 AMP = (DEVICE.type == "cuda")
 turbo_cuda(); reseed(SEED)
@@ -155,7 +155,7 @@ def a_to_idx(a: int): return int(a + 1)
 # Estado anti-explosão
 cooldown_until = 0
 rollbacks = 0
-last_good = None   # snapshot periódico para rollback
+last_good = None   # Snapshot periódico para rollback
 
 # =========================================================
 # 🚀 Setup
@@ -177,8 +177,9 @@ set_lr(opt, lr_now)
 
 _, EPSILON_SAVED, _ = carregar_estado(modelo, opt)
 EPSILON = EPSILON_SAVED if EPSILON_SAVED is not None else EPSILON_INICIAL
-modelo = torch.compile(modelo, mode="max-autotune-no-cudagraphs", fullgraph=False)
+modelo = torch.compile(modelo, mode="max-autotune-no-cudagraphs", fullgraph=False)  # Alternativa para mais otimização
 alvo = torch.compile(alvo, mode="max-autotune-no-cudagraphs", fullgraph=False)
+
 print(f"🧠 Iniciando treino simbiótico | device={DEVICE.type}")
 
 total_steps, episodio, best_global = 0, 0, CAPITAL_INICIAL
@@ -258,33 +259,35 @@ while True:
                 "temp": float(temp_now),
             }
 
-        # =================================================
-        # 🎓 Aprendizado simbiótico (robusto + cooldown + freeze)
-        # =================================================
         can_train = (len(replay) >= MIN_REPLAY) and (total_steps >= cooldown_until)
 
         if can_train:
             # Amostragem do replay buffer
             (estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t, idx, w, y_ret_t) = replay.sample(BATCH)
 
-            # Calculando os alvos (Double DQN)
+            # Liberar memória não utilizada da GPU
+            torch.cuda.empty_cache()  # Limpa a memória não utilizada
+
+            # Não usar CUDA Graphs aqui, vamos apenas realizar o cálculo diretamente
+            # Captura do gráfico CUDA
             with torch.no_grad():
+                # Evitar a sobrescrição dos tensores de saída
                 next_q_online, _ = modelo(novos_estados_t)
                 next_q_target, _ = alvo(novos_estados_t)
 
-                # Clamps para evitar overflow
-                next_q_online = next_q_online.clamp_(-Q_CLAMP, Q_CLAMP)
-                next_q_target = next_q_target.clamp_(-Q_CLAMP, Q_CLAMP)
+                # Clonando os tensores fora do gráfico para evitar sobrescrita
+                next_q_online = next_q_online.clone().clamp_(-Q_CLAMP, Q_CLAMP)
+                next_q_target = next_q_target.clone().clamp_(-Q_CLAMP, Q_CLAMP)
 
                 next_actions = torch.argmax(next_q_online, dim=1, keepdim=True)
                 next_best = next_q_target.gather(1, next_actions).squeeze(1)
                 alvo_q = recompensas_t + (GAMMA ** N_STEP) * next_best * (1.0 - finais_t)
-                alvo_q = alvo_q.clamp_(-Q_TARGET_CLAMP, Q_TARGET_CLAMP)
+                alvo_q = alvo_q.clone().clamp_(-Q_TARGET_CLAMP, Q_TARGET_CLAMP)
 
-            # Resetando gradientes
+            # Resetando gradientes após o cálculo do forward pass
             opt.zero_grad(set_to_none=True)
 
-            # Cálculo do forward pass
+            # Cálculo do forward pass para o modelo (congelamento de gradientes)
             with autocast(device_type="cuda", enabled=AMP):
                 q_vals, y_pred = modelo(estados_t)
                 q_vals = q_vals.clamp_(-Q_CLAMP, Q_CLAMP)
@@ -293,7 +296,7 @@ while True:
                 # Congelamento do modelo de regressão no início do treinamento
                 do_reg = total_steps >= REG_FREEZE_STEPS
 
-                # Tratar valores de retorno (y_ret_t)
+                # Tratar valores de retorno (y_ret_t) para evitar NaN ou Inf
                 y_ret_t = torch.nan_to_num(y_ret_t, nan=0.0, posinf=0.0, neginf=0.0)
                 y_target = y_ret_t.clamp_(-Y_CLAMP, Y_CLAMP) / Y_CLAMP
 
@@ -301,7 +304,7 @@ while True:
                 loss_q = loss_q_hibrida(q_sel, alvo_q)
                 loss_reg = loss_regressao(y_pred, y_target) if do_reg else torch.zeros_like(loss_q)
 
-                # Atualização das médias exponenciais
+                # Atualização das médias exponenciais (EMA)
                 if ema_q is None:
                     ema_q, ema_r = float(loss_q.item()), float(loss_reg.item())
                 ema_q = 0.98 * ema_q + 0.02 * float(loss_q.item())
@@ -336,6 +339,7 @@ while True:
                     temp_now = min(TEMP_INI, temp_now * 1.02)
                     print(f"⚠ Reset simbiótico (sem rollback) | novo LR={lr_now:.6f} | cooldown até {cooldown_until}")
 
+                # Resetando gradientes e criando novo GradScaler
                 opt.zero_grad(set_to_none=True)
                 for p in modelo.parameters():
                     if p.grad is not None:
@@ -365,6 +369,9 @@ while True:
 
                 last_loss = float(loss_total.item()) if torch.isfinite(loss_total) else last_loss
                 last_y_pred = float(y_pred[-1].item()) if 'y_pred' in locals() else last_y_pred
+
+            # Liberar a memória GPU após o treinamento de cada iteração
+            torch.cuda.empty_cache()  # Limpar a memória não utilizada
 
         # =================================================
         # 🌿 Manutenção simbiótica
