@@ -1,206 +1,222 @@
 # =========================================================
-# 🌌 EtherSym Finance — main_v8f_turbo_simbiotico.py (universal patch)
+# 🌌 EtherSym Finance — main_v8f_turbo_parallel.py
 # =========================================================
-# - Compatível com PyTorch 2.6 → 2.9.1
+# - Paralelismo total (CPU multiprocess + GPU streams)
 # - torch.compile turbo + autotune persistente
-# - Sem segmentation fault, sem atributos inválidos
+# - Finalização automática de episódios e continuidade
+# - Cache simbiótico, sem segfaults
 # =========================================================
 
-import os, warnings
-
-# =========================================================
-# 🔐 Patch simbiótico estável e compatível
-# =========================================================
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-os.environ["TORCH_COMPILE_DEBUG"] = "0"
-os.environ["TORCHINDUCTOR_DISABLE_FX_VALIDATION"] = "1"
-os.environ["TORCHINDUCTOR_FUSE_TRIVIAL_OPS"] = "1"
-os.environ["TORCHINDUCTOR_MAX_AUTOTUNE"] = "1"
-os.environ["TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS"] = "cublas,triton"
-os.environ["TORCHINDUCTOR_CACHE_DIR"] = os.path.expanduser("~/.cache/torch/inductor")
-
-# Desliga logs internos sem quebrar versões recentes
-try:
-    import torch._logging as _logging
-    _logging.set_logs()  # limpa logs simbióticos
-except Exception:
-    pass
-
-# =========================================================
-# ⚙️ Configuração avançada (versão adaptativa)
-# =========================================================
-import torch
-
-# Dynamo / Inductor (compatível com todas as builds)
-try:
-    import torch._dynamo.config as dynamo_cfg
-    dynamo_cfg.verbose = False
-    dynamo_cfg.suppress_errors = True
-    dynamo_cfg.log_level = "ERROR"
-except Exception:
-    pass
-
-try:
-    import torch._inductor.config as inductor_cfg
-    inductor_cfg.debug = False
-    inductor_cfg.compile_threads = 1
-    inductor_cfg.triton.cudagraphs = False
-    inductor_cfg.max_autotune = True
-    inductor_cfg.max_autotune_pointwise = True
-    inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
-    inductor_cfg.max_autotune_gemm_mode = "HEURISTIC"  # evita NoValidChoicesError
-
-except Exception as e:
-    print(f"⚠️ Patch inductor parcial: {e}")
-
-
-print("🧩 Patch simbiótico turbo universal ativado | Inductor otimizado e estável")
-
-# =========================================================
-# 🔥 Imports principais
-# =========================================================
-import torch, asyncio, concurrent.futures, gc, queue, threading
+import os, warnings, torch, asyncio, gc, queue, threading, multiprocessing as mp
 from core.setup import setup_simbiotico
 from core.scheduler import update_params
 from core.collector import collect_step
 from core.trainer import train_step
 from core.checkpoints import check_vitoria, rollback_guard
 from core.patrimonio import carregar_patrimonio_global, salvar_patrimonio_global
-from core.maintenance import (
-    aplicar_poda, regenerar_sinapses,
-    verificar_homeostase, homeostase_replay
-)
+from core.maintenance import aplicar_poda, regenerar_sinapses, verificar_homeostase, homeostase_replay
 from core.logger import log_status
 from core.hyperparams import *
 from memory import salvar_estado
 
+# =========================================================
+# 🔐 Patch simbiótico estável
+# =========================================================
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+os.environ.update({
+    "TORCH_COMPILE_DEBUG": "0",
+    "TORCHINDUCTOR_DISABLE_FX_VALIDATION": "1",
+    "TORCHINDUCTOR_FUSE_TRIVIAL_OPS": "1",
+    "TORCHINDUCTOR_MAX_AUTOTUNE": "1",
+    "TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS": "cublas,triton",
+    "TORCHINDUCTOR_CACHE_DIR": os.path.expanduser("~/.cache/torch/inductor"),
+})
 
+try:
+    import torch._inductor.config as cfg
+    cfg.debug = False
+    cfg.compile_threads = 1
+    cfg.triton.cudagraphs = False
+    cfg.max_autotune = True
+    cfg.max_autotune_pointwise = True
+    cfg.max_autotune_gemm_mode = "HEURISTIC"
+except Exception as e:
+    print(f"⚠️ Patch parcial: {e}")
+
+print("🧩 Patch simbiótico turbo ativado | Inductor otimizado e estável")
 
 # =========================================================
-# ⚙️ Logging assíncrono (não bloqueante)
+# ⚙️ Logging assíncrono
 # =========================================================
 log_q = queue.Queue()
 def _log_worker():
     while True:
         msg = log_q.get()
-        if msg is None:
-            break
+        if msg is None: break
         print(msg)
 threading.Thread(target=_log_worker, daemon=True).start()
 
+# =========================================================
+# 🧩 Worker paralelo (coleta simbiótica CPU)
+# =========================================================
+def env_worker(rank, conn):
+    """Executa ambiente independente e envia transições"""
+    env, modelo, _, _, replay, nbuf, _ = setup_simbiotico()
+    torch.set_num_threads(1)
+    while True:
+        try:
+            if conn.poll():
+                cmd, payload = conn.recv()
+                if cmd == "reset":
+                    env.reset()
+                    continue
+            s, done, info, total_reward_ep = collect_step(env, modelo, DEVICE, 1.0, replay, nbuf, 0.0)
+            conn.send((s, done, info, total_reward_ep))
+        except EOFError:
+            break
+        except Exception as e:
+            conn.send(("error", str(e)))
+            break
 
 # =========================================================
-# 🔁 Loop principal simbiótico turbo
+# 🔁 Loop principal simbiótico turbo (GPU + CPU paralelo)
 # =========================================================
 async def main():
     env, modelo, alvo, opt, replay, nbuf, scaler = setup_simbiotico()
     best_global = carregar_patrimonio_global()
 
-    try:
-        modelo = torch.compile(modelo, mode="max-autotune-no-cudagraphs", fullgraph=False)
-        alvo = torch.compile(alvo, mode="max-autotune-no-cudagraphs", fullgraph=False)
-        print("⚙️ torch.compile ativado (modo turbo)")
-    except Exception as e:
-        print(f"[WARN] torch.compile desativado: {e}")
+    modelo = torch.compile(modelo, mode="max-autotune-no-cudagraphs", fullgraph=False)
+    alvo = torch.compile(alvo, mode="max-autotune-no-cudagraphs", fullgraph=False)
+    print(f"⚙️ torch.compile ativo | device={DEVICE.type}")
+
+    # 🌐 Inicia múltiplos ambientes paralelos
+    N_ENVS = min(4, os.cpu_count() // 2)
+    ctx = mp.get_context("spawn")
+    pipes, workers = [], []
+    for i in range(N_ENVS):
+        parent, child = ctx.Pipe()
+        p = ctx.Process(target=env_worker, args=(i, child))
+        p.daemon = True
+        p.start()
+        pipes.append(parent)
+        workers.append(p)
+    print(f"🧩 {N_ENVS} ambientes simbióticos em paralelo inicializados")
+
+    # 🔄 Streams CUDA independentes
+    stream_train = torch.cuda.Stream()
+    stream_sync = torch.cuda.Stream()
 
     EPSILON, lr_now, temp_now, beta_per = 1.0, LR, TEMP_INI, BETA_PER_INI
     ema_q = ema_r = 0.0
     total_steps, episodio = 0, 0
     cooldown_until, rollbacks = 0, 0
-    last_loss, last_y_pred, last_good = 0.0, 0.0, None
+    last_loss = 0.0
+    melhor_patrimonio_ep = 0.0
 
-    print(f"🧠 Iniciando treino simbiótico | device={DEVICE.type} | patrimônio inicial={best_global:.2f}")
+    info = {"capital": CAPITAL_INICIAL, "patrimonio": CAPITAL_INICIAL, "max_patrimonio": CAPITAL_INICIAL, "energia": 1.0, "ret": 0.0}
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    stream = torch.cuda.Stream()
+    print(f"🧠 Iniciando treino simbiótico | patrimônio inicial={best_global:.2f}")
 
     while True:
-        episodio += 1
-        s = env.reset()
-        env.current_state = s
-        done = False
-        total_reward_ep = 0.0
-        capital = CAPITAL_INICIAL
-        max_patrimonio = CAPITAL_INICIAL
-        melhor_patrimonio_ep = CAPITAL_INICIAL
+        total_steps += 1
 
-        while not done:
-            total_steps += 1
-            lr_now, EPSILON, temp_now, beta_per, eps_now = update_params(
-                total_steps, lr_now, EPSILON, temp_now, beta_per, replay, opt
-            )
+        # 🔹 Recebe amostras dos envs paralelos
+        for parent in pipes:
+            if parent.poll():
+                data = parent.recv()
+                if isinstance(data, tuple) and not (isinstance(data[0], str) and data[0] == "error"):
+                    s, done, info_recv, total_reward_ep = data
+                    info.update(info_recv)
+                    if replay is not None:
+                        try:
+                            replay.push_batch(s) if hasattr(replay, "push_batch") else replay.push(s)
+                        except Exception:
+                            pass
+                    # 🔁 Finaliza e reinicia episódios
+                    if done or float(info.get("capital", 0.0)) <= 1.0:
+                        episodio += 1
+                        melhor_patrimonio_ep = float(info.get("max_patrimonio", best_global))
+                        total_reward_ep = float(info.get("reward", 0.0))
+                        try:
+                            best_global = check_vitoria(
+                                melhor_patrimonio_ep,
+                                best_global,
+                                modelo,
+                                opt,
+                                replay,
+                                EPSILON,
+                                total_reward_ep
+                            )
+                            salvar_patrimonio_global(best_global)
+                            log_q.put(f"🏁 Episódio {episodio:04d} finalizado | melhor={melhor_patrimonio_ep:.2f} | global={best_global:.2f}")
+                        except Exception as e:
+                            log_q.put(f"⚠️ Erro em check_vitoria(): {e}")
+                        for pipe in pipes:
+                            try:
+                                pipe.send(("reset", None))
+                            except:
+                                pass
+                        torch.cuda.synchronize()
+                        await asyncio.sleep(0.05)
 
-            with torch.cuda.stream(stream):
-                s, done, info, total_reward_ep = collect_step(
-                    env, modelo, DEVICE, eps_now, replay, nbuf, total_reward_ep
-                )
-            torch.cuda.current_stream().wait_stream(stream)
+                elif isinstance(data, tuple) and data[0] == "error":
+                    log_q.put(f"⚠️ Erro em worker: {data[1]}")
 
-            can_train = (len(replay) >= MIN_REPLAY) and (total_steps >= cooldown_until)
-            if can_train:
-                with torch.cuda.stream(stream):
-                    loss, ema_q, ema_r = train_step(
-                        modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps
-                    )
-                last_loss = loss if loss is not None else last_loss * 0.95
-
-                if rollback_guard(loss, total_steps, modelo, alvo, opt, replay, EPSILON):
-                    cooldown_until = total_steps + COOLDOWN_STEPS
-                    rollbacks += 1
-                    log_q.put(f"⚠ Reset simbiótico #{rollbacks} | cooldown até {cooldown_until}")
-
-            best_global = check_vitoria(
-                info.get("patrimonio", 0.0),
-                best_global,
-                modelo,
-                opt,
-                replay,
-                EPSILON,
-                total_reward_ep,
-            )
-
-            if total_steps % PODA_EVERY == 0 and len(replay) >= MIN_REPLAY:
-                taxa = aplicar_poda(modelo)
-                regenerar_sinapses(modelo, taxa)
-                verificar_homeostase(modelo, last_loss)
-                log_q.put(f"🌿 Poda simbiótica — taxa={taxa*100:.2f}% | step={total_steps}")
-
-            if total_steps % HOMEOSTASE_EVERY == 0:
-                homeostase_replay(replay)
-
-            if total_steps % PRINT_EVERY == 0:
-                energia = float(info.get("energia", 1.0))
-                last_y_pred = float(info.get("ret", 0.0))
-                msg = log_status(
-                    episodio, total_steps,
-                    float(info.get("capital", capital)),
-                    float(info.get("patrimonio", 0.0)),
-                    float(info.get("max_patrimonio", max_patrimonio)),
-                    eps_now, temp_now, beta_per, lr_now,
-                    energia, last_y_pred, last_loss
-                )
-                log_q.put(msg)
-
-            if total_steps % SAVE_EVERY == 0 and len(replay) >= MIN_REPLAY:
-                torch.cuda.synchronize()
-                salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
-                log_q.put(f"💾 Checkpoint salvo | step={total_steps}")
-
-        salvar_patrimonio_global(best_global)
-        log_q.put(
-            f"\n🔁 Episódio {episodio:04d} finalizado | cap_final={info.get('capital', 0):.2f} | best={best_global:.2f}\n"
+        # 🔹 Atualiza hiperparâmetros
+        lr_now, EPSILON, temp_now, beta_per, eps_now = update_params(
+            total_steps, lr_now, EPSILON, temp_now, beta_per, replay, opt
         )
 
-        if info.get("capital", 0) <= 1.0:
-            log_q.put("💀 Falência simbiótica — reiniciando ambiente")
-            env.reset()
+        # 🔹 Treino simbiótico (GPU)
+        if len(replay) >= MIN_REPLAY and total_steps >= cooldown_until:
+            with torch.cuda.stream(stream_train):
+                loss, ema_q, ema_r = train_step(
+                    modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps
+                )
+            last_loss = loss if loss is not None else last_loss * 0.95
+            torch.cuda.current_stream().wait_stream(stream_train)
 
+            if rollback_guard(loss, total_steps, modelo, alvo, opt, replay, EPSILON):
+                cooldown_until = total_steps + COOLDOWN_STEPS
+                rollbacks += 1
+                log_q.put(f"⚠ Reset simbiótico #{rollbacks}")
+
+        # 🔹 Ciclos de poda e homeostase
+        if total_steps % PODA_EVERY == 0 and len(replay) >= MIN_REPLAY:
+            taxa = aplicar_poda(modelo)
+            regenerar_sinapses(modelo, taxa)
+            verificar_homeostase(modelo, last_loss)
+            log_q.put(f"🌿 Poda simbiótica — taxa={taxa*100:.2f}%")
+
+        if total_steps % HOMEOSTASE_EVERY == 0:
+            homeostase_replay(replay)
+
+        # 🔹 Logging seguro
+        if total_steps % PRINT_EVERY == 0 and info is not None:
+            msg = log_status(
+                episodio, total_steps,
+                float(info.get("capital", 0.0)),
+                float(info.get("patrimonio", 0.0)),
+                float(info.get("max_patrimonio", 0.0)),
+                eps_now, temp_now, beta_per, lr_now,
+                float(info.get("energia", 1.0)),
+                float(info.get("ret", 0.0)),
+                last_loss
+            )
+            log_q.put(msg)
+
+        # 🔹 Checkpoints
+        if total_steps % SAVE_EVERY == 0 and len(replay) >= MIN_REPLAY:
+            torch.cuda.synchronize()
+            salvar_estado(modelo, opt, replay, EPSILON, total_steps)
+            salvar_patrimonio_global(best_global)
+            log_q.put(f"💾 Checkpoint salvo | step={total_steps}")
+
+        # 🔹 Limpeza periódica
         if total_steps % 4096 == 0:
             torch.cuda.synchronize()
             gc.collect()
-
 
 # =========================================================
 # 🚀 Execução simbiótica turbo
@@ -211,5 +227,5 @@ if __name__ == "__main__":
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    print("🚀 EtherSym Turbo Engine — inicializando loop simbiótico")
+    print("🚀 EtherSym Turbo Engine — paralelismo total ativado")
     asyncio.run(main())
