@@ -1,4 +1,29 @@
-# Tenta corrigir a função de inicialização do Replay e garantir que o estado seja atualizado
+try:
+    import torch._logging as _logging
+    _logging.set_logs()  # limpa logs simbióticos
+except Exception:
+    pass
+
+
+try:
+    import torch._dynamo.config as dynamo_cfg
+    dynamo_cfg.verbose = False
+    dynamo_cfg.suppress_errors = True
+    dynamo_cfg.log_level = "ERROR"
+except Exception:
+    pass
+
+try:
+    import torch._inductor.config as inductor_cfg
+    inductor_cfg.debug = False
+    inductor_cfg.compile_threads = 1
+    inductor_cfg.triton.cudagraphs = False
+    inductor_cfg.max_autotune = True
+    inductor_cfg.max_autotune_pointwise = True
+    inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
+
+except Exception as e:
+    print(f"⚠️ Patch inductor parcial: {e}")
 
 import asyncio, gc, queue, threading, multiprocessing as mp
 from core.setup import setup_simbiotico
@@ -39,9 +64,10 @@ def _log_worker():
         print(msg)
 threading.Thread(target=_log_worker, daemon=True).start()
 
-def env_worker(rank, conn, replay):
-    """Executa ambiente independente e envia transições, compartilhando replay buffer"""
-    env, modelo, alvo, opt, nbuf, scaler, EPSILON = setup_simbiotico()
+# Worker do ambiente
+def env_worker(rank, conn):
+    """Executa ambiente independente e envia transições"""
+    env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON = setup_simbiotico()
 
     torch.set_num_threads(1)
     total_reward_ep = 0.0  # Acumulador de recompensa do episódio
@@ -60,9 +86,6 @@ def env_worker(rank, conn, replay):
 
             # Atualiza o total de recompensa
             total_reward_ep += r  # Acumula a recompensa
-
-            # Atualiza o replay buffer
-            replay.append(s, a_to_idx(a), r, s_next, done, y_ret)
 
             conn.send((s, done, info, total_reward_ep))
 
@@ -126,7 +149,8 @@ async def main():
                     info.update(info_recv)
                     if replay is not None:
                         try:
-                            replay.push_batch(s) if hasattr(replay, "push_batch") else replay.push(s)
+                            # Atualiza o replay buffer corretamente
+                            replay.push(s)  # Garante que as transições sejam armazenadas
                         except Exception:
                             pass
                     # 🔁 Finaliza e reinicia episódios
