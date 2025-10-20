@@ -1,26 +1,23 @@
 import os, random, warnings, gc, torch, numpy as np, psutil
 
+import torch, gc, threading
+
 # =========================================================
-# 🧩 Utilitários simbióticos — turbo + limpeza profunda
+# 🚀 Utilitário turbo simbiótico — otimizado para PyTorch 2.4+
 # =========================================================
+import torch, gc
+
 def turbo_cuda():
-    """Ativa o modo turbo CUDA com kernels persistentes e alta precisão."""
+
+    # =========================================================
+    # 🚀 Turbo CUDA não bloqueante
+    # =========================================================
     torch.set_float32_matmul_precision("high")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False
 
-    # 🔥 Força liberação e flush da VRAM
-    try:
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        gc.collect()
-        if torch.cuda.is_available():
-            free_mem = torch.cuda.mem_get_info()[0] / 1e9
-            print(f"🚀 CUDA Turbo ON | VRAM livre={free_mem:.2f} GB")
-    except Exception as e:
-        print(f"[WARN] turbo_cuda: {e}")
 
 def reseed(seed=42):
     """Reseta RNG global (CPU + GPU) para reprodutibilidade simbiótica."""

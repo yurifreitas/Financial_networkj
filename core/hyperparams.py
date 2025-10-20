@@ -10,11 +10,12 @@ AMP = (DEVICE.type == "cuda")
 
 
 # Treino
-BATCH = 1024
+BATCH = 512
 GAMMA = 0.995
-LR = 5e-5           # ↓ mais conservador para estabilidade
+LR = 3e-5
 LR_MIN = 1e-6
-LR_WARMUP_STEPS = 5_000
+LR_WARMUP_STEPS = 2_000
+
 N_STEP = 4
 
 # Replay / Epsilon / Temperatura
@@ -42,7 +43,7 @@ MAX_ROLLBACKS = 5
 PRINT_EVERY = 800
 SAVE_EVERY = 10_000
 PODA_EVERY = 5_000
-HOMEOSTASE_EVERY = 2_000
+HOMEOSTASE_EVERY = 4_000
 TARGET_TAU_BASE = 0.005
 HARD_SYNC_EVERY = 50_000
 CAPITAL_INICIAL = 1_000.0
