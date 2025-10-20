@@ -1,14 +1,14 @@
 {
-  "timestamp": "2025-10-20 14:26:29",
-  "episodio": 1,
-  "melhor_score": 24417.0,
-  "capital_final": 264.80132255447666,
-  "patrimonio_final": 264.80132255447666,
-  "max_patrimonio": 1013.02361569619,
+  "timestamp": "2025-10-20 16:47:44",
+  "episodio": 4,
+  "melhor_score": 34060.0,
+  "capital_final": 221.64055292857012,
+  "patrimonio_final": 221.64055292857012,
+  "max_patrimonio": 1843.2064688681323,
   "energia_final": 0.0,
-  "sharpe_like": -0.00029481607151063063,
-  "taxa_acerto": 1.0,
-  "trades_win": 389,
-  "trades_lose": 473,
-  "trades_total": 862
+  "sharpe_like": -0.0004928019615192589,
+  "taxa_acerto": 0.9746835443037974,
+  "trades_win": 278,
+  "trades_lose": 283,
+  "trades_total": 561
 }
