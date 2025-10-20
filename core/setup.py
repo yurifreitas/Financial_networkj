@@ -15,7 +15,7 @@ def setup_simbiotico():
     env = Env(base, price)
     modelo, alvo, opt = criar_modelo(DEVICE, lr=LR)
 
-    turbo_cuda()
+    # turbo_cuda()
     reseed(SEED)
 
     replay = RingReplay(state_dim=base.shape[1] + 2, capacity=MEMORIA_MAX, device=DEVICE)
