@@ -1,12 +1,3 @@
-# =========================================================
-# 🧠 EtherSym Finance — core/trainer_v8n_resilient_warm.py
-# =========================================================
-# - GradScaler resiliente e adaptativo
-# - Warmup simbiótico suave no início
-# - Proteção anti-NaN/Inf total
-# - Amortecimento híbrido da perda e energia simbiótica
-# =========================================================
-
 import torch, math, logging
 from torch.amp import autocast, GradScaler
 from core.utils import soft_update, is_bad_number
@@ -27,11 +18,11 @@ def _sanitize_safe(t, minv=-1e9, maxv=1e9):
         return None
     return torch.clamp(torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0), minv, maxv)
 
-
 # =========================================================
 # 🧬 Treinamento simbiótico principal
 # =========================================================
-def train_step(modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps):
+def train_step(modelo, alvo, opt, replay, scaler, ema_q, ema_r):
+    # Sample mini-batch from replay buffer
     (s_t, a_t, r_t, sn_t, f_t, idx, w, y_ret_t) = replay.sample(BATCH)
 
     # =====================================================
@@ -57,29 +48,30 @@ def train_step(modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps):
         q_vals = _sanitize_safe(q_vals, -Q_CLAMP, Q_CLAMP)
 
         q_sel = q_vals.gather(1, a_t).squeeze(1)
-        y_target = y_ret_t.clamp(-Y_CLAMP, Y_CLAMP) / Y_CLAMP
+        y_target = y_ret_t.clamp_(-Y_CLAMP, Y_CLAMP) / Y_CLAMP
 
+        # Função de perda híbrida
         loss_q = loss_q_hibrida(q_sel, alvo_q)
-        do_reg = total_steps >= REG_FREEZE_STEPS
-        loss_reg = loss_regressao(y_pred, y_target) if do_reg else torch.zeros_like(loss_q)
+        loss_reg = loss_regressao(y_pred, y_target)
 
-        # Médias móveis simbióticas
+        # Médias móveis
         ema_q = 0.98 * ema_q + 0.02 * float(loss_q.item())
         ema_r = 0.98 * ema_r + 0.02 * float(loss_reg.item())
         λ = LAMBDA_REG_BASE * max(0.3, min(2.0, (ema_q + 1e-3) / (ema_r + 1e-3)))
 
+        # Perda total
         loss_total = loss_q + λ * loss_reg
 
-        # 🪶 Warmup simbiótico (suaviza gradiente inicial)
+        # Suavização do gradiente no início (warmup)
         if total_steps < 4096:
             warm = total_steps / 4096.0
             loss_total = loss_total * warm
 
-        # 🔬 Amortecimento exponencial — evita picos
+        # Amortecimento exponencial
         loss_total = loss_total / (1.0 + torch.exp(-loss_total / 25.0))
 
     # =====================================================
-    # 🚫 Proteção simbiótica contra explosão
+    # 🚫 Proteção contra perda anômala
     # =====================================================
     if (not torch.isfinite(loss_total)
         or is_bad_number(loss_total)
@@ -88,18 +80,18 @@ def train_step(modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps):
 
         logging.warning(f"⚠️ Loss simbiótico anômalo ({loss_total.item():.4f}) → rollback local")
 
-        # 🔁 Rollback adaptativo
+        # Rollback adaptativo
         for g in opt.param_groups:
             g["lr"] = max(LR_MIN, g["lr"] * 0.7)
 
-        # Reset seguro do GradScaler
+        # Reset GradScaler
         scaler = GradScaler("cuda", enabled=AMP)
         ema_q *= 0.9
         torch.cuda.empty_cache()
         return None, ema_q, ema_r
 
     # =====================================================
-    # 💪 Backprop + GradScaler resiliente
+    # 💪 Backprop + GradScaler
     # =====================================================
     scaler.scale(loss_total).backward()
     scaler.unscale_(opt)
@@ -114,38 +106,25 @@ def train_step(modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps):
         opt.zero_grad(set_to_none=True)
         return None, ema_q, ema_r
 
-    # =====================================================
-    # ⚡ Energia simbiótica contínua
-    # =====================================================
-    if total_steps % 256 == 0:
-        with torch.no_grad():
-            delta_loss = abs(loss_total.item() - ema_q)
-            energia_t = math.exp(-delta_loss / 10.0)
-            energia_prev = globals().get("energia_prev", energia_t)
-            energia_suave = 0.9 * energia_prev + 0.1 * energia_t
-            globals()["energia_prev"] = energia_suave
 
-            lr_base = opt.param_groups[0]["lr"]
-            lr_novo = max(LR_MIN, lr_base * (0.85 + 0.25 * energia_suave))
-            for g in opt.param_groups:
-                g["lr"] = lr_novo
+    with torch.no_grad():
+        delta_loss = abs(loss_total.item() - ema_q)
+        energia_t = math.exp(-delta_loss / 10.0)
+        energia_prev = globals().get("energia_prev", energia_t)
+        energia_suave = 0.9 * energia_prev + 0.1 * energia_t
+        globals()["energia_prev"] = energia_suave
 
-            if total_steps % 2048 == 0:
-                logging.info(f"⚡ Energia simbiótica ajustada | enr={energia_suave:.2f} | lr={lr_novo:.6f}")
+        # Ajuste da taxa de aprendizado com base na energia
+        lr_base = opt.param_groups[0]["lr"]
+        lr_novo = max(LR_MIN, lr_base * (0.85 + 0.25 * energia_suave))
+        for g in opt.param_groups:
+            g["lr"] = lr_novo
 
-    # =====================================================
-    # 🔁 Atualização PER e alvo Q
-    # =====================================================
-    if total_steps % 64 == 0:
-        with torch.no_grad():
-            td_error = (alvo_q - q_sel).abs().clamp_(0, 5.0)
-            replay.update_priority(idx, td_error.detach().cpu())
-
-    if total_steps % 2048 == 0:
-        with torch.no_grad():
-            tau = min(0.01, TARGET_TAU_BASE * (1.0 + min(2.0, float(loss_q.item()))))
-            soft_update(alvo, modelo, tau)
-            logging.info(f"🔄 Sincronização simbiótica | step={total_steps}")
+    with torch.no_grad():
+        td_error = (alvo_q - q_sel).abs().clamp_(0, 5.0)
+        replay.update_priority(idx, td_error.detach().cpu())
+        tau = min(0.01, TARGET_TAU_BASE * (1.0 + min(2.0, float(loss_q.item()))))
+        soft_update(alvo, modelo, tau)
 
     # =====================================================
     # 🧩 Retorno simbiótico

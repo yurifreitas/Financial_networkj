@@ -1,5 +1,5 @@
 import torch
-from network import RedeAvancada
+from core.network import RedeAvancada
 
 STATE_PATH = "estado_treinamento_finance.pth"
 

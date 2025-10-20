@@ -1,13 +1,34 @@
-# =========================================================
-# 🌌 EtherSym Finance — main_v8f_turbo_parallel.py
-# =========================================================
-# - Paralelismo total (CPU multiprocess + GPU streams)
-# - torch.compile turbo + autotune persistente
-# - Finalização automática de episódios e continuidade
-# - Cache simbiótico, sem segfaults
-# =========================================================
 
-import os, warnings, torch, asyncio, gc, queue, threading, multiprocessing as mp
+try:
+    import torch._logging as _logging
+    _logging.set_logs()  # limpa logs simbióticos
+except Exception:
+    pass
+
+
+try:
+    import torch._dynamo.config as dynamo_cfg
+    dynamo_cfg.verbose = False
+    dynamo_cfg.suppress_errors = True
+    dynamo_cfg.log_level = "ERROR"
+except Exception:
+    pass
+
+try:
+    import torch._inductor.config as inductor_cfg
+    inductor_cfg.debug = False
+    inductor_cfg.compile_threads = 1
+    inductor_cfg.triton.cudagraphs = False
+    inductor_cfg.max_autotune = True
+    inductor_cfg.max_autotune_pointwise = True
+    inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
+
+except Exception as e:
+    print(f"⚠️ Patch inductor parcial: {e}")
+
+
+
+import asyncio, gc, queue, threading, multiprocessing as mp
 from core.setup import setup_simbiotico
 from core.scheduler import update_params
 from core.collector import collect_step
@@ -17,7 +38,10 @@ from core.patrimonio import carregar_patrimonio_global, salvar_patrimonio_global
 from core.maintenance import aplicar_poda, regenerar_sinapses, verificar_homeostase, homeostase_replay
 from core.logger import log_status
 from core.hyperparams import *
-from memory import salvar_estado
+from core.memory import salvar_estado
+
+
+import os, warnings
 
 # =========================================================
 # 🔐 Patch simbiótico estável
@@ -33,18 +57,6 @@ os.environ.update({
     "TORCHINDUCTOR_CACHE_DIR": os.path.expanduser("~/.cache/torch/inductor"),
 })
 
-try:
-    import torch._inductor.config as cfg
-    cfg.debug = False
-    cfg.compile_threads = 1
-    cfg.triton.cudagraphs = False
-    cfg.max_autotune = True
-    cfg.max_autotune_pointwise = True
-    cfg.max_autotune_gemm_mode = "HEURISTIC"
-except Exception as e:
-    print(f"⚠️ Patch parcial: {e}")
-
-print("🧩 Patch simbiótico turbo ativado | Inductor otimizado e estável")
 
 # =========================================================
 # ⚙️ Logging assíncrono
@@ -57,25 +69,31 @@ def _log_worker():
         print(msg)
 threading.Thread(target=_log_worker, daemon=True).start()
 
-# =========================================================
-# 🧩 Worker paralelo (coleta simbiótica CPU)
-# =========================================================
+
 def env_worker(rank, conn):
     """Executa ambiente independente e envia transições"""
-    env, modelo, _, _, replay, nbuf, _ = setup_simbiotico()
+    env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON = setup_simbiotico()
+
     torch.set_num_threads(1)
     while True:
         try:
+            # Verifica se há dados para processar
             if conn.poll():
                 cmd, payload = conn.recv()
                 if cmd == "reset":
                     env.reset()
                     continue
+
+            # Coleta os dados do ambiente
             s, done, info, total_reward_ep = collect_step(env, modelo, DEVICE, 1.0, replay, nbuf, 0.0)
-            conn.send((s, done, info, total_reward_ep))
+            conn.send((s, done, info, total_reward_ep))  # Envia os dados coletados
         except EOFError:
+            # Se a conexão for fechada, encerra o loop
+            print(f"[Worker {rank}] Conexão encerrada.")
             break
         except Exception as e:
+            # Caso algum outro erro ocorra, registra e tenta continuar
+            print(f"[Worker {rank}] Erro: {e}")
             conn.send(("error", str(e)))
             break
 
@@ -83,7 +101,8 @@ def env_worker(rank, conn):
 # 🔁 Loop principal simbiótico turbo (GPU + CPU paralelo)
 # =========================================================
 async def main():
-    env, modelo, alvo, opt, replay, nbuf, scaler = setup_simbiotico()
+    env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON = setup_simbiotico()
+
     best_global = carregar_patrimonio_global()
 
     modelo = torch.compile(modelo, mode="max-autotune-no-cudagraphs", fullgraph=False)

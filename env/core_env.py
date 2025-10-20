@@ -18,7 +18,7 @@ from .config_env import (
 from .persistence_env import load_best_score, save_best_score
 
 PERSIST_PATH = "metrics_history.jsonl"   # histórico incremental longo
-FALENCIA_HARD = 500.0                    # limiar absoluto secundário
+FALENCIA_HARD = 300.0                    # limiar absoluto secundário
 VOL_WIN = 64                             # janela p/ vol local
 DD_WIN = 2048                            # janela p/ drawdown local
 
@@ -239,10 +239,10 @@ class Env:
 
         # === CONDIÇÕES DE TÉRMINO ===
         done_env = False
-                # =====================================================
+        # =====================================================
         # 🏆 Condição de Vitória — Patrimônio Duplicado
         # =====================================================
-        FATOR_VITORIA = 1.5  # dobra o capital inicial
+        FATOR_VITORIA = 8.5  # dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             logging.info(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")
@@ -400,4 +400,3 @@ class Env:
             os.fsync(f.fileno())
         self.metrics_buffer.clear()
         logging.info(f"🧩 {count} pétricas salvas em {PERSIST_PATH}")
-

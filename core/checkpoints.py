@@ -6,20 +6,15 @@
 # - Proteção contra explosão numérica e perda infinita
 # =========================================================
 
-import torch, os
+import os
 from core.patrimonio import salvar_patrimonio_global
 from core.hyperparams import *
-from memory import salvar_estado
+from core.memory import salvar_estado
+
 
 # =========================================================
-# 🏆 Vitória simbiótica (patrimônio recorde)
-# =========================================================
 def check_vitoria(patrimonio, best_global, modelo, opt, replay, EPSILON, total_reward_ep):
-    """
-    Se o patrimônio atingir um fator simbiótico (ex.: 4.5x o capital inicial),
-    salva o estado completo do modelo e atualiza o patrimônio global.
-    """
-    FATOR_VITORIA = 1.5
+    FATOR_VITORIA = 8.5  # Ajuste o fator de vitória conforme necessário
     if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
         print(f"\n🏆 Vitória simbiótica | patrimônio={patrimonio:.2f} ({FATOR_VITORIA}x)")
         salvar_patrimonio_global(patrimonio)
@@ -28,14 +23,7 @@ def check_vitoria(patrimonio, best_global, modelo, opt, replay, EPSILON, total_r
     return best_global
 
 
-# =========================================================
-# ⚠️ Rollback simbiótico (proteção contra instabilidade)
-# =========================================================
 def rollback_guard(loss, total_steps, modelo, alvo, opt, replay, EPSILON):
-    """
-    Detecta valores anômalos de perda e executa rollback simbiótico.
-    Evita que o modelo se degrade em estados instáveis ou NaN.
-    """
     if loss is None or not torch.isfinite(torch.tensor(loss)):
         print(f"💥 Rollback simbiótico: perda inválida detectada (NaN/Inf) em step={total_steps}")
         _rollback(modelo, alvo, opt, replay, EPSILON)
@@ -49,15 +37,8 @@ def rollback_guard(loss, total_steps, modelo, alvo, opt, replay, EPSILON):
     return False
 
 
-# =========================================================
-# 🔙 Execução real do rollback simbiótico
-# =========================================================
 def _rollback(modelo, alvo, opt, replay, EPSILON):
-    """
-    Restaura um estado simbiótico anterior e aplica cooldown.
-    """
     try:
-        from memory import carregar_estado
         modelo.load_state_dict(modelo.state_dict(), strict=False)
         alvo.load_state_dict(modelo.state_dict(), strict=False)
         opt.state = {}  # reset leve no otimizador
@@ -67,14 +48,8 @@ def _rollback(modelo, alvo, opt, replay, EPSILON):
         print(f"[WARN] rollback simbiótico falhou: {e}")
 
 
-# =========================================================
-# 💾 Salvamento seguro (modo simbiótico atômico)
-# =========================================================
+
 def salvar_estado_seguro(modelo, opt, replay, EPSILON, total_reward_ep):
-    """
-    Salva o estado completo do sistema de forma atômica.
-    Usa um arquivo temporário e renomeia para evitar corrupções.
-    """
     try:
         tmp_path = "estado_tmp.pth"
         final_path = "estado_simbio.pth"

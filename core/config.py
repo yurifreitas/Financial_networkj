@@ -1,22 +1,21 @@
 import os, random, warnings, gc, torch, numpy as np, psutil
-
-import torch, gc, threading
-
-# =========================================================
-# 🚀 Utilitário turbo simbiótico — otimizado para PyTorch 2.4+
-# =========================================================
 import torch, gc
 
-def turbo_cuda():
+# Ambiente
+LARGURA = 800
+ALTURA = 600
+FPS = 120
+FAST_MODE = True               # True = headless, False = renderiza
+RENDER_INTERVAL = 10           # renderiza a cada N steps
+ACTION_REPEAT = 2              # repete a ação N vezes
 
-    # =========================================================
-    # 🚀 Turbo CUDA não bloqueante
-    # =========================================================
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
+# Visualização / Tema
+COR_FUNDO = (10, 10, 30)
+COR_EQ_UP = (0, 255, 80)
+COR_EQ_DOWN = (255, 60, 60)
+FONTE = "DejaVuSans"
+
+
 
 
 def reseed(seed=42):

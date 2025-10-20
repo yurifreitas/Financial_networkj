@@ -8,9 +8,8 @@ SEED = 64
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 AMP = (DEVICE.type == "cuda")
 
-
 # Treino
-BATCH = 512
+BATCH = 1024
 GAMMA = 0.995
 LR = 3e-5
 LR_MIN = 1e-6
@@ -18,6 +17,24 @@ LR_WARMUP_STEPS = 2_000
 
 N_STEP = 4
 
+# Log / Salvamento
+LOG_INTERVAL = 500             # Passos entre logs
+AUTOSAVE_EVERY = 120           # Segundos entre autosaves
+SAVE_PATH = "../estado_treinamento_finance.pth"
+
+# Homeostase simbiótica
+PODA_BASE = 0.002
+NEUROGENESE_LIMIAR = 0.15
+HOMEOSTASE_TOLERANCIA = 0.015
+
+# Logs / manutenção
+PRINT_EVERY = 800
+SAVE_EVERY = 10_000
+PODA_EVERY = 5_000
+HOMEOSTASE_EVERY = 4_000
+TARGET_TAU_BASE = 0.005
+HARD_SYNC_EVERY = 50_000
+CAPITAL_INICIAL = 1_000.0
 # Replay / Epsilon / Temperatura
 MEMORIA_MAX = 250_000
 MIN_REPLAY = 3_000
@@ -39,18 +56,11 @@ REG_FREEZE_STEPS = 10_000
 ROLLBACK_EVERY = 2_000
 MAX_ROLLBACKS = 5
 
-# Logs / manutenção
-PRINT_EVERY = 800
-SAVE_EVERY = 10_000
-PODA_EVERY = 5_000
-HOMEOSTASE_EVERY = 4_000
-TARGET_TAU_BASE = 0.005
-HARD_SYNC_EVERY = 50_000
-CAPITAL_INICIAL = 1_000.0
+
 
 ACTION_SPACE = np.array([-1, 0, 1], dtype=np.int8)
 
-
+# Variáveis para controle do treinamento
 total_steps, episodio = 0, 0
 last_loss, last_y_pred = 0.0, 0.0
 temp_now, beta_per = TEMP_INI, BETA_PER_INI

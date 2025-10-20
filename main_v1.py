@@ -9,15 +9,13 @@
 # - Anti-explosão: clamps, cooldown de treino e rollback periódico
 # =========================================================
 
-import os, time, math, random, warnings
-import numpy as np, pandas as pd, torch
-import torch.nn.functional as F
+import os, math
+import pandas as pd
 from torch.amp import GradScaler, autocast
 
-from network import criar_modelo
+from core.network import criar_modelo
 from env import Env, make_feats
-from memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
-import json
+from core.memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
 from core.utils import escolher_acao, soft_update, set_lr, is_bad_number,a_to_idx
 from core.losses import loss_q_hibrida, loss_regressao
 from core.patrimonio import carregar_patrimonio_global, salvar_patrimonio_global

@@ -1,9 +1,9 @@
-import os, torch, pandas as pd
+import os, pandas as pd
 from torch.amp import GradScaler
-from network import criar_modelo
+from core.network import criar_modelo
 from env import Env, make_feats
-from memory import RingReplay, NStepBuffer
-from core.config import turbo_cuda, reseed
+from core.memory import NStepBuffer,carregar_estado
+from core.config import reseed
 from core.hyperparams import *
 def setup_simbiotico():
     if not os.path.exists(CSV):
@@ -17,8 +17,11 @@ def setup_simbiotico():
 
     # turbo_cuda()
     reseed(SEED)
+    # Ao carregar o estado
+    replay, EPSILON_SAVED, media_saved = carregar_estado(modelo, opt, path=SAVE_PATH)
+    EPSILON = EPSILON_SAVED if EPSILON_SAVED is not None else EPSILON_INICIAL
+    print(f"♻️ Estado carregado | ε={EPSILON:.3f} | média={media_saved:.3f}")
 
-    replay = RingReplay(state_dim=base.shape[1] + 2, capacity=MEMORIA_MAX, device=DEVICE)
     nbuf = NStepBuffer(N_STEP, GAMMA)
     scaler = GradScaler("cuda", enabled=AMP)
-    return env, modelo, alvo, opt, replay, nbuf, scaler
+    return env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON
