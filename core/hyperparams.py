@@ -4,23 +4,23 @@ import torch, numpy as np
 # ⚙️ Hiperparâmetros principais
 # =========================================================
 CSV = "binance_BTC_USDT_1h_2y.csv"
-SEED = 64
+SEED = 53
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 AMP = (DEVICE.type == "cuda")
 
 # Treino
-BATCH = 1024
+BATCH = 64
 GAMMA = 0.995
 LR = 3e-5
 LR_MIN = 1e-6
 LR_WARMUP_STEPS = 2_000
 
-N_STEP = 4
+N_STEP = 10
 
 # Log / Salvamento
 LOG_INTERVAL = 500             # Passos entre logs
 AUTOSAVE_EVERY = 120           # Segundos entre autosaves
-SAVE_PATH = "../estado_treinamento_finance.pth"
+SAVE_PATH = "./estado_treinamento_finance.pth"
 
 # Homeostase simbiótica
 PODA_BASE = 0.002
@@ -31,14 +31,16 @@ HOMEOSTASE_TOLERANCIA = 0.015
 PRINT_EVERY = 800
 SAVE_EVERY = 10_000
 PODA_EVERY = 5_000
-HOMEOSTASE_EVERY = 4_000
+HOMEOSTASE_EVERY = 4_0000
 TARGET_TAU_BASE = 0.005
 HARD_SYNC_EVERY = 50_000
 CAPITAL_INICIAL = 1_000.0
 # Replay / Epsilon / Temperatura
 MEMORIA_MAX = 250_000
 MIN_REPLAY = 3_000
-EPSILON_INICIAL, EPSILON_DECAY, EPSILON_MIN = 1.0, 0.9992, 0.05
+EPSILON_INICIAL = 1.0
+EPSILON_DECAY = 0.99
+EPSILON_MIN = 0.1
 TEMP_INI, TEMP_MIN, TEMP_DECAY = 0.95, 0.60, 0.9995
 BETA_PER_INI, BETA_PER_MAX, BETA_PER_DECAY = 0.6, 1.0, 0.9999
 

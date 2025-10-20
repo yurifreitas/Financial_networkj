@@ -1,14 +1,29 @@
-# =========================================================
-# 🌌 EtherSym Finance — main.py (Simbiótico Estável v7f)
-# =========================================================
-# - Double DQN + N-Step + Prioritized Replay (PER robusto)
-# - Regressão contínua normalizada (tanh-free) com freeze inicial
-# - AMP + GradClip + Homeostase + Poda + Regeneração
-# - Anneal de ε, Temperatura e β-PER
-# - LR Warmup + CosineDecay + Soft/Hard Target Sync
-# - Anti-explosão: clamps, cooldown de treino e rollback periódico
-# =========================================================
+try:
+    import torch._logging as _logging
+    _logging.set_logs()  # limpa logs simbióticos
+except Exception:
+    pass
 
+
+try:
+    import torch._dynamo.config as dynamo_cfg
+    dynamo_cfg.verbose = False
+    dynamo_cfg.suppress_errors = True
+    dynamo_cfg.log_level = "ERROR"
+except Exception:
+    pass
+
+try:
+    import torch._inductor.config as inductor_cfg
+    inductor_cfg.debug = False
+    inductor_cfg.compile_threads = 1
+    inductor_cfg.triton.cudagraphs = False
+    inductor_cfg.max_autotune = True
+    inductor_cfg.max_autotune_pointwise = True
+    inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
+
+except Exception as e:
+    print(f"⚠️ Patch inductor parcial: {e}")
 import os, math
 import pandas as pd
 from torch.amp import GradScaler, autocast
@@ -20,7 +35,8 @@ from core.utils import escolher_acao, soft_update, set_lr, is_bad_number,a_to_id
 from core.losses import loss_q_hibrida, loss_regressao
 from core.patrimonio import carregar_patrimonio_global, salvar_patrimonio_global
 from core.hyperparams import *
-from core.config import turbo_cuda, reseed
+from core.config import reseed
+from core.maintenance import aplicar_poda, regenerar_sinapses, verificar_homeostase, homeostase_replay
 if not os.path.exists(CSV):
     raise FileNotFoundError(f"CSV não encontrado: {CSV}")
 
@@ -28,7 +44,7 @@ df = pd.read_csv(CSV)
 base, price = make_feats(df)
 env = Env(base, price)
 modelo, alvo, opt = criar_modelo(DEVICE, lr=LR)
-turbo_cuda()
+
 reseed(SEED)
 replay = RingReplay(state_dim=base.shape[1] + 2, capacity=MEMORIA_MAX, device=DEVICE)
 nbuf = NStepBuffer(N_STEP, GAMMA)
@@ -241,15 +257,14 @@ while True:
         # 🌿 Manutenção simbiótica
         # =================================================
         if total_steps % PODA_EVERY == 0 and len(replay) >= MIN_REPLAY:
-            taxa = modelo.aplicar_poda()
-            modelo.regenerar_sinapses(taxa)
-            modelo.verificar_homeostase(last_loss)
-            print(f"🌿 Poda simbiótica — taxa={taxa*100:.2f}% | step={total_steps}")
+            taxa = aplicar_poda(modelo)
+            regenerar_sinapses(modelo, taxa)
+            verificar_homeostase(modelo, last_loss)
+
 
         if total_steps % HOMEOSTASE_EVERY == 0:
             replay.homeostase()
-
-        modelo.verificar_homeostase(total_reward_ep / max(1, (total_steps % 10_000)))
+        verificar_homeostase(modelo, total_reward_ep / max(1, (total_steps % 10_000)))
 
         # =================================================
         # 🧾 Logs / checkpoints

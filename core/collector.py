@@ -9,9 +9,6 @@
 import torch
 from core.utils import escolher_acao, a_to_idx
 
-# =========================================================
-# 🚀 Coletor simbiótico
-# =========================================================
 def collect_step(env, modelo, device, eps_now, replay, nbuf, total_reward_ep):
     """
     Executa uma etapa no ambiente simbiótico e registra transições no replay buffer.
@@ -38,11 +35,14 @@ def collect_step(env, modelo, device, eps_now, replay, nbuf, total_reward_ep):
 
     # 🚀 Passo no ambiente
     sp, r, done, info = env.step(a)
-    total_reward_ep += r
+
+    # Atualiza o total de recompensa para o episódio
+    total_reward_ep += r  # Acumula a recompensa no episódio
 
     # 💾 Transição N-Step
     y_ret = float(info.get("ret", 0.0))
     nbuf.push(s_cur, a, r, y_ret)
+
     if len(nbuf.traj) == nbuf.n or done:
         item = nbuf.flush(sp, done)
         if item:
@@ -51,4 +51,6 @@ def collect_step(env, modelo, device, eps_now, replay, nbuf, total_reward_ep):
 
     # 🔁 Atualiza o estado
     env.current_state = sp
+
+    # Retorna o próximo estado, se o episódio terminou, informações e o total de recompensa acumulado
     return sp, done, info, total_reward_ep

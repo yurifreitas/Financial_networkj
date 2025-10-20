@@ -1,32 +1,4 @@
-
-try:
-    import torch._logging as _logging
-    _logging.set_logs()  # limpa logs simbióticos
-except Exception:
-    pass
-
-
-try:
-    import torch._dynamo.config as dynamo_cfg
-    dynamo_cfg.verbose = False
-    dynamo_cfg.suppress_errors = True
-    dynamo_cfg.log_level = "ERROR"
-except Exception:
-    pass
-
-try:
-    import torch._inductor.config as inductor_cfg
-    inductor_cfg.debug = False
-    inductor_cfg.compile_threads = 1
-    inductor_cfg.triton.cudagraphs = False
-    inductor_cfg.max_autotune = True
-    inductor_cfg.max_autotune_pointwise = True
-    inductor_cfg.max_autotune_gemm_backends = "cublas,triton,aten"  # ✅ inclui fallback ATEN
-
-except Exception as e:
-    print(f"⚠️ Patch inductor parcial: {e}")
-
-
+# Tenta corrigir a função de inicialização do Replay e garantir que o estado seja atualizado
 
 import asyncio, gc, queue, threading, multiprocessing as mp
 from core.setup import setup_simbiotico
@@ -39,7 +11,6 @@ from core.maintenance import aplicar_poda, regenerar_sinapses, verificar_homeost
 from core.logger import log_status
 from core.hyperparams import *
 from core.memory import salvar_estado
-
 
 import os, warnings
 
@@ -57,7 +28,6 @@ os.environ.update({
     "TORCHINDUCTOR_CACHE_DIR": os.path.expanduser("~/.cache/torch/inductor"),
 })
 
-
 # =========================================================
 # ⚙️ Logging assíncrono
 # =========================================================
@@ -69,12 +39,12 @@ def _log_worker():
         print(msg)
 threading.Thread(target=_log_worker, daemon=True).start()
 
-
-def env_worker(rank, conn):
-    """Executa ambiente independente e envia transições"""
-    env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON = setup_simbiotico()
+def env_worker(rank, conn, replay):
+    """Executa ambiente independente e envia transições, compartilhando replay buffer"""
+    env, modelo, alvo, opt, nbuf, scaler, EPSILON = setup_simbiotico()
 
     torch.set_num_threads(1)
+    total_reward_ep = 0.0  # Acumulador de recompensa do episódio
     while True:
         try:
             # Verifica se há dados para processar
@@ -82,11 +52,20 @@ def env_worker(rank, conn):
                 cmd, payload = conn.recv()
                 if cmd == "reset":
                     env.reset()
+                    total_reward_ep = 0.0  # Resetando a recompensa no reinício
                     continue
 
             # Coleta os dados do ambiente
-            s, done, info, total_reward_ep = collect_step(env, modelo, DEVICE, 1.0, replay, nbuf, 0.0)
-            conn.send((s, done, info, total_reward_ep))  # Envia os dados coletados
+            s, done, info, r = collect_step(env, modelo, DEVICE, EPSILON, replay, nbuf, total_reward_ep)
+
+            # Atualiza o total de recompensa
+            total_reward_ep += r  # Acumula a recompensa
+
+            # Atualiza o replay buffer
+            replay.append(s, a_to_idx(a), r, s_next, done, y_ret)
+
+            conn.send((s, done, info, total_reward_ep))
+
         except EOFError:
             # Se a conexão for fechada, encerra o loop
             print(f"[Worker {rank}] Conexão encerrada.")
@@ -97,9 +76,7 @@ def env_worker(rank, conn):
             conn.send(("error", str(e)))
             break
 
-# =========================================================
-# 🔁 Loop principal simbiótico turbo (GPU + CPU paralelo)
-# =========================================================
+# Função principal do treino
 async def main():
     env, modelo, alvo, opt, replay, nbuf, scaler, EPSILON = setup_simbiotico()
 
@@ -188,10 +165,10 @@ async def main():
         )
 
         # 🔹 Treino simbiótico (GPU)
-        if len(replay) >= MIN_REPLAY and total_steps >= cooldown_until:
+        if (len(replay) >= MIN_REPLAY) and (total_steps >= cooldown_until):
             with torch.cuda.stream(stream_train):
                 loss, ema_q, ema_r = train_step(
-                    modelo, alvo, opt, replay, scaler, ema_q, ema_r, total_steps
+                    modelo, alvo, opt, replay, scaler, ema_q, ema_r
                 )
             last_loss = loss if loss is not None else last_loss * 0.95
             torch.cuda.current_stream().wait_stream(stream_train)
@@ -202,6 +179,7 @@ async def main():
                 log_q.put(f"⚠ Reset simbiótico #{rollbacks}")
 
         # 🔹 Ciclos de poda e homeostase
+        print("Replay Buffer Length: ", len(replay))  # Imprime o tamanho do replay buffer
         if total_steps % PODA_EVERY == 0 and len(replay) >= MIN_REPLAY:
             taxa = aplicar_poda(modelo)
             regenerar_sinapses(modelo, taxa)
@@ -225,8 +203,10 @@ async def main():
             )
             log_q.put(msg)
 
-        # 🔹 Checkpoints
-        if total_steps % SAVE_EVERY == 0 and len(replay) >= MIN_REPLAY:
+        if (total_steps % SAVE_EVERY == 0) and len(replay) >= MIN_REPLAY:
+            salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
+            print(f"💾 Checkpoint salvo | step={total_steps}")
+
             torch.cuda.synchronize()
             salvar_estado(modelo, opt, replay, EPSILON, total_steps)
             salvar_patrimonio_global(best_global)
