@@ -69,6 +69,45 @@ class RingReplay:
         else:
             p = (p / s).astype(np.float32)
         return p
+    # ------------------------------------------------------
+    # Reinicializa o buffer (limpeza total)
+    # ------------------------------------------------------
+    def clear(self):
+        """Esvazia completamente o replay buffer."""
+        self.idx = 0
+        self.full = False
+        self.s.fill(0.0)
+        self.a.fill(0)
+        self.r.fill(0.0)
+        self.sn.fill(0.0)
+        self.d.fill(0.0)
+        self.y.fill(0.0)
+        self.p.fill(1.0)
+        print("♻️ Replay Buffer limpo com sucesso.")
+
+    # ------------------------------------------------------
+    # Mantém apenas os N% mais recentes do buffer
+    # ------------------------------------------------------
+    def trim(self, keep_ratio=0.5):
+        """Mantém apenas parte recente do replay (por padrão 50%)."""
+        n = len(self)
+        if n == 0:
+            return
+        k = int(n * keep_ratio)
+        start = n - k
+
+        # Copia os dados mais recentes pro início
+        self.s[:k]  = self.s[start:n]
+        self.a[:k]  = self.a[start:n]
+        self.r[:k]  = self.r[start:n]
+        self.sn[:k] = self.sn[start:n]
+        self.d[:k]  = self.d[start:n]
+        self.y[:k]  = self.y[start:n]
+        self.p[:k]  = self.p[start:n]
+
+        self.idx = k
+        self.full = False
+        print(f"♻️ Replay reduzido: mantidos {k}/{n} exemplos ({keep_ratio*100:.0f}%).")
 
     # ------------------------------------------------------
     # Amostragem com PER e pesos de importância

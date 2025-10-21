@@ -3,7 +3,7 @@ from env import Env, make_feats
 from v1.memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
 from v1.setup import *
 import os, json, time
-
+import gc
 # Função para carregar o melhor patrimônio global
 def carregar_patrimonio_global():
     if os.path.exists("recorde_maximo.json"):
@@ -290,7 +290,11 @@ while True:
             best_global = melhor_patrimonio_ep
             salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
             print(f"🏆 Novo melhor patrimônio global={best_global:.2f} | step={total_steps}")
-
+        if total_steps % 20_000 == 0 :
+            print(f"\n🧹 Manutenção do Replay Buffer | step={total_steps} | len={len(replay)}")
+            replay.clear()
+            torch.cuda.empty_cache()
+            gc.collect()
         if done:
             # fim do episódio
             s = env.reset()
