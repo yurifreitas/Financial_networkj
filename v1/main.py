@@ -143,7 +143,7 @@ while True:
                 "temp": float(temp_now),
             }
 
-        can_train = (len(replay) >= MIN_REPLAY) and (total_steps >= cooldown_until)
+        can_train =  total_steps % 15_000 == 0
 
         if can_train:
             # Amostragem do replay buffer
@@ -290,11 +290,6 @@ while True:
             best_global = melhor_patrimonio_ep
             salvar_estado(modelo, opt, replay, EPSILON, total_reward_ep)
             print(f"🏆 Novo melhor patrimônio global={best_global:.2f} | step={total_steps}")
-        if total_steps % 20_000 == 0 :
-            print(f"\n🧹 Manutenção do Replay Buffer | step={total_steps} | len={len(replay)}")
-            replay.clear()
-            torch.cuda.empty_cache()
-            gc.collect()
         if done:
             # fim do episódio
             s = env.reset()
