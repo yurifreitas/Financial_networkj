@@ -2,8 +2,15 @@ from v1.network import criar_modelo
 from env import Env, make_feats
 from v1.memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
 from v1.setup import *
+import os, json, time
 
-
+# Função para carregar o melhor patrimônio global
+def carregar_patrimonio_global():
+    if os.path.exists("recorde_maximo.json"):
+        with open("recorde_maximo.json", "r") as f:
+            recorde_data = json.load(f)
+            return recorde_data.get("patrimonio_final", CAPITAL_INICIAL)
+    return CAPITAL_INICIAL  # Caso não exista o arquivo, retorna o valor inicial
 
 base, price = make_feats(df)
 env = Env(base, price)
@@ -23,11 +30,12 @@ alvo = torch.compile(alvo, mode="max-autotune-no-cudagraphs", fullgraph=False)
 
 print(f"🧠 Iniciando treino simbiótico | device={DEVICE.type}")
 
-total_steps, episodio, best_global = 0, 0, CAPITAL_INICIAL
+total_steps, episodio= 0, 0
 last_loss, last_y_pred = 0.0, 0.0
 temp_now, beta_per = TEMP_INI, BETA_PER_INI
 ema_q, ema_r = None, None
-
+best_global = carregar_patrimonio_global()
+print(f"Patrimônio global carregado: {best_global:.2f}")
 # =========================================================
 # 🎮 Loop principal
 # =========================================================
@@ -89,6 +97,41 @@ while True:
         s = sp
         done = done_env
 
+        FATOR_VITORIA = 2.5  # Dobra o capital inicial
+        if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
+            done_env = True
+            print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {episodio}")
+
+            # Salvando a vitória
+            vitoria_data = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "episodio": episodio,
+                "capital_final": capital,
+                "patrimonio_final": patrimonio,
+                "max_patrimonio": max_patrimonio,
+                "energia_final": float(info.get("energia", 1.0)),
+                "pontuacao": float(info.get("pontuacao", 0.0)),
+                "taxa_acerto": float(info.get("taxa_acerto", 0.0)),
+                "trades_win": int(info.get("trades_win", 0)),
+                "trades_lose": int(info.get("trades_lose", 0)),
+                "trades_total": int(info.get("trades_total", 0)),
+            }
+
+            try:
+                os.makedirs("runs", exist_ok=True)
+                with open(f"runs/vitoria_ep{episodio}_{int(time.time())}.json", "w") as f:
+                    json.dump(vitoria_data, f, indent=2)
+                print("💾 Vitória simbiótica registrada em runs/")
+            except Exception as e:
+                print(f"[WARN] Falha ao salvar vitória simbiótica: {e}")
+
+        if done:
+            # fim do episódio
+            s = env.reset()
+            if capital <= 1.0:
+                best_global = max(best_global, max_patrimonio)
+                print(f"\n💀 Falência simbiótica | cap_final={capital:.2f} | melhor_global={best_global:.2f}")
+            break
         # ===== Snapshot "estado bom" periódico p/ rollback =====
         if (total_steps % ROLLBACK_EVERY == 0) and (len(replay) >= MIN_REPLAY):
             last_good = {

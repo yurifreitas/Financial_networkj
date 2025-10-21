@@ -8,7 +8,7 @@ CAPITAL_INICIAL = 1_000.0 # capital inicial simbiótico
 # ==== 🎯 Metas de retorno e horizonte ====
 TARGET_RET = 0.005        # alvo de retorno base (0.4%)
 H_FUTURO = 3              # horizonte preditivo curto (3 candles)
-MIN_STEPS = 800           # mínimo de steps por episódio
+MIN_STEPS = 400           # mínimo de steps por episódio
 
 # ==== 📈 Stops e limites globais (valores padrão, usados em core_env) ====
 STOP_LOSS_PCT = 0.15         # perda máxima 8%
