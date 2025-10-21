@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-10-21 01:51:42",
+  "episodio": 112,
+  "capital_final": 241.38769841080602,
+  "patrimonio_final": 2501.3282750945177,
+  "max_patrimonio": 2501.3282750945177,
+  "energia_final": 0.04130253568291664,
+  "pontuacao": 17206.0,
+  "taxa_acerto": 1.0,
+  "trades_win": 140,
+  "trades_lose": 111,
+  "trades_total": 251
+}
