@@ -1,15 +1,14 @@
 import numpy as np
 
-def compute(close: np.ndarray, window=20) -> list:
-    hurst_values = [None] * (window - 1)
-
-    for i in range(window, len(close) + 1):
-        subseries = close[i - window:i]
-        N = len(subseries)
-        ts = np.cumsum(subseries - np.mean(subseries))
-        R = np.max(ts) - np.min(ts)
-        S = np.std(subseries)
-        H = np.log(R / (S + 1e-10)) / np.log(N)
-        hurst_values.append(float(H))
-
-    return hurst_values
+def compute(close: np.ndarray, window: int = 20) -> np.ndarray:
+    """Cálculo do expoente de Hurst (R/S) com janela deslizante."""
+    N = len(close)
+    result = np.full(N, np.nan, dtype=float)
+    for i in range(window - 1, N):
+        sub = close[i - window + 1:i + 1]
+        mean_adj = sub - np.mean(sub)
+        cumdev = np.cumsum(mean_adj)
+        R = np.max(cumdev) - np.min(cumdev)
+        S = np.std(sub)
+        result[i] = np.log(R / (S + 1e-10)) / np.log(window)
+    return result

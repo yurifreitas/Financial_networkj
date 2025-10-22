@@ -1,9 +1,10 @@
 # ============================================================
-# 🌌 EtherSym Finance — Estratégia simbiótica adaptativa v5.5
+# 🌌 EtherSym Finance — Estratégia simbiótica adaptativa v5.6
 # ============================================================
-# - Ativação automática de limiar direcional
-# - Reforço simbiótico pela coerência média real
-# - Autoajuste da inércia e momentum
+# - Correção de limiares inativos
+# - Amplificação dinâmica da força simbiótica (fs_gain)
+# - Normalização coerente de retorno simbiótico
+# - Logs de depuração para análise real
 # ============================================================
 
 import numpy as np
@@ -29,7 +30,9 @@ class EstrategiaVariacao:
         inercia_base=0.65,
         momentum_gain=1.25,
         suavizacao=0.25,
-        atividade_min=0.05,   # ativa reação mínima
+        atividade_min=0.05,
+        fs_gain=25.0,            # novo: ganho de compressão simbiótica
+        debug=False              # novo: modo de depuração
     ):
         self.vol_base = vol_base
         self.limiar_base = limiar_base
@@ -50,7 +53,10 @@ class EstrategiaVariacao:
         self.momentum_gain = momentum_gain
         self.suavizacao = suavizacao
         self.atividade_min = atividade_min
+        self.fs_gain = fs_gain
+        self.debug = debug
 
+        # estado simbiótico interno
         self.posicao = 0
         self.preco_entrada = None
         self._ultima_energia = 1.0
@@ -68,10 +74,14 @@ class EstrategiaVariacao:
         ret = float(pred.get("retorno_pred", 0.0))
         coerencia = float(pred.get("coerencia", 0.8)) or 0.8
         energia = float(pred.get("energia", 1.0))
-        vol = float(pred.get("vol", self.vol_base))
 
         if preco <= 0.0:
             return "neutro"
+
+        # 🔹 Normalização preventiva (modelo pode retornar valores pequenos)
+        if abs(ret) < 1e-5:
+            ret *= 100
+        ret = np.tanh(ret * 10)  # reforço simbiótico seguro
 
         # --- Energia e coerência médias ---
         energia = (1 - self.suavizacao) * self._ultima_energia + self.suavizacao * energia
@@ -90,8 +100,7 @@ class EstrategiaVariacao:
 
         # --- Limiar adaptativo real ---
         base_limiar = self.limiar_base * np.clip(1.0 / (self._agressividade + 1e-6), 0.5, 2.0)
-        # aumenta a sensibilidade se coerência média for muito baixa
-        limiar_entrada = base_limiar * (0.7 + (1.0 - coerencia) * 0.8)
+        limiar_entrada = base_limiar * (0.5 + (1.0 - coerencia) * 0.5)
 
         # --- Stops/Takes dinâmicos ---
         energia_factor = np.interp(energia, [self.energia_min, self.energia_max], [0.8, 1.25])
@@ -104,16 +113,19 @@ class EstrategiaVariacao:
         self._forca_direcional = (
             0.7 * self._forca_direcional + 0.3 * (ret * coerencia * energia * momentum_factor)
         )
-        fs = np.tanh(self._forca_direcional * 5)  # compressão simbiótica
+        fs = np.tanh(self._forca_direcional * self.fs_gain)  # amplificação simbiótica
         ret_ponderado = ret * coerencia * energia
+
+        # === LOG OPCIONAL PARA DEBUG ===
+        if self.debug:
+            print(f"[estratégia] preco={preco:.2f} ret={ret:.4f} fs={fs:.4f} limiar={limiar_entrada:.4f} pos={self.posicao}")
 
         # ============================================================
         # 🔹 SEM POSIÇÃO
         # ============================================================
         if self.posicao == 0:
-            # força mínima simbiótica
             if abs(fs) < self.atividade_min:
-                fs *= (1.0 + np.random.uniform(0.2, 0.5))
+                fs *= (1.0 + np.random.uniform(0.5, 0.8))
             if fs >= limiar_entrada:
                 self.posicao = +1
                 self.preco_entrada = preco

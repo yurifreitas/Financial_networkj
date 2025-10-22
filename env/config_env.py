@@ -31,7 +31,3 @@ PONTUACAO_BONUS = 1.0         # pontos por acerto (reforço simbólico)
 RANDOM_START = True
 START_MODE = "volatility"     # escolhe início por volatilidade
 CYCLE_AT_END = True           # recicla dataset no final (loop contínuo)
-
-# ==== 🧠 Arquivo de persistência ====
-BEST_SCORE_FILE = "best_score.json"
-

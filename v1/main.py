@@ -10,7 +10,7 @@ def carregar_patrimonio_global():
     if os.path.exists("recorde_maximo.json"):
         with open("recorde_maximo.json", "r") as f:
             recorde_data = json.load(f)
-            return recorde_data.get("patrimonio_final", CAPITAL_INICIAL)
+            return recorde_data.get("max_patrimonio", CAPITAL_INICIAL)
     return CAPITAL_INICIAL  # Caso não exista o arquivo, retorna o valor inicial
 
 base, price = make_feats(df)
@@ -100,7 +100,7 @@ while True:
         s = sp
         done = done_env
 
-        FATOR_VITORIA = 2.5  # Dobra o capital inicial
+        FATOR_VITORIA = 3.5  # Dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {episodio}")
@@ -146,7 +146,7 @@ while True:
                 "temp": float(temp_now),
             }
 
-        can_train =  total_steps % 15_000 == 0
+        can_train =  total_steps % 200_000 == 0
 
         # ==========================================================
         # 🧬 Ciclo de Treino com Ruído Colepax + Fase Temporal

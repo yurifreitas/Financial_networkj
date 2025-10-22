@@ -11,11 +11,9 @@ from .config_env import (
     ENERGIA_INICIAL, ENERGIA_LIMITE, ENERGIA_DECAIMENTO,
     ENERGIA_BONUS, ENERGIA_PENALTY, PONTUACAO_BONUS,
     RANDOM_START, START_MODE, CYCLE_AT_END,
-    BEST_SCORE_FILE,
     STOP_LOSS_PCT, TAKE_PROFIT_PCT, HOLD_MIN,
     ENERGIA_RECOMPENSA_SCALING, ENERGIA_REGEN_LIMIT
 )
-from .persistence_env import load_best_score, save_best_score
 
 PERSIST_PATH = "metrics_history.jsonl"   # histórico incremental longo
 FALENCIA_HARD = 300.0                    # limiar absoluto secundário
@@ -47,7 +45,6 @@ class Env:
         vol = np.abs(np.diff(self.p))
         self._vol = vol / (vol.sum() + 1e-9)
 
-        self.best_score = load_best_score()
         self._reset_episode_counters()
         self.reset()
 
@@ -242,7 +239,7 @@ class Env:
         # =====================================================
         # 🏆 Condição de Vitória — Patrimônio Duplicado
         # =====================================================
-        FATOR_VITORIA = 2.5  # dobra o capital inicial
+        FATOR_VITORIA = 3.5  # dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             logging.info(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")
@@ -294,7 +291,6 @@ class Env:
                 "ep": int(self.episodios),
                 "steps": int(self.steps),
                 "pontuacao": float(self.pontuacao),
-                "melhor": float(self.best_score),
                 "energia_final": float(self.energia),
                 "taxa_acerto": float(taxa_acerto),
                 "eficiencia": float(eficiencia),
@@ -315,38 +311,7 @@ class Env:
                 import threading
                 threading.Thread(target=self._persist_metrics, daemon=True).start()
 
-            if self.pontuacao > self.best_score:
-                self.best_score = self.pontuacao
-                save_best_score(self.best_score)
-                logging.info(f"🏆 Novo recorde simbiótico: {self.best_score:.1f} pontos!")
 
-                # =====================================================
-                # 💾 Registro simbiótico global completo
-                # =====================================================
-                recorde_data = {
-                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "episodio": int(self.episodios),
-                    "melhor_score": float(self.best_score),
-                    "capital_final": float(self.capital),
-                    "patrimonio_final": float(patrimonio),
-                    "max_patrimonio": float(self.max_patrimonio),
-                    "energia_final": float(self.energia),
-                    "sharpe_like": float(sharpe_like),
-                    "taxa_acerto": float(taxa_acerto),
-                    "trades_win": int(self.trades_win),
-                    "trades_lose": int(self.trades_lose),
-                    "trades_total": int(self.trades_total)
-                }
-
-                try:
-                    with open("recorde_maximo.json", "w") as f:
-                        json.dump(recorde_data, f, indent=2)
-                    logging.info("💾 Recorde global simbiótico salvo em recorde_maximo.json")
-                except Exception as e:
-                    logging.info(f"[WARN] Falha ao salvar recorde_maximo: {e}")
-
-
-            # reset “completo”
             self.pos = 0.0
             self.preco_entrada = None
             self.capital = CAPITAL_INICIAL
@@ -367,7 +332,6 @@ class Env:
             "erro": float(erro_abs),
             "energia": float(self.energia),
             "pontuacao": float(self.pontuacao),
-            "melhor": float(self.best_score),
             "capital": float(self.capital),
             "patrimonio": float(patrimonio),
             "max_patrimonio": float(self.max_patrimonio),

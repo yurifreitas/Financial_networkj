@@ -47,7 +47,7 @@ FONTE = "DejaVuSans"
 # ⚙️ Hiperparâmetros principais
 # =========================================================
 CSV = "binance_BTC_USDT_15m_2y.csv"
-SEED = 64
+SEED = 12
 
 
 
