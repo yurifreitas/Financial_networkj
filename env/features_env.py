@@ -1,13 +1,15 @@
 # =========================================================
-# 🌌 EtherSym Finance — features_env.py (v2.0 simbiótico)
+# 🌌 EtherSym Finance — features_env_v2_cached.py
 # =========================================================
-# - Combina análise estatística, fractal, energética e técnica
-# - Normaliza coerentemente o vetor de estado simbiótico
-# - Compatível com o ambiente Env do treino principal
+# - Gera features simbióticas completas (estatísticas, fractais, energéticas e técnicas)
+# - Usa cache automático para evitar recálculo desnecessário
+# - Verifica integridade pelo hash do dataset de entrada
+# - Compatível com o ambiente Env do treino simbiótico
 # =========================================================
 
 import numpy as np
 import pandas as pd
+import hashlib, os, time, json
 
 # === Indicadores internos ===
 from indicators.statistical.hurst import compute as hurst
@@ -21,18 +23,46 @@ from indicators.fractal_chaos.mfdfa import compute as multifractal_dfa
 
 
 # =========================================================
-# 🧩 Função auxiliar
+# 🧩 Funções auxiliares
 # =========================================================
 def normalize(series: pd.Series) -> pd.Series:
     return (series - series.mean()) / (series.std() + 1e-9)
 
 
+def hash_dataframe(df: pd.DataFrame) -> str:
+    """Gera hash simbiótico para o dataset (para verificar se já existe cache)."""
+    h = hashlib.sha256()
+    h.update(str(df.shape).encode())
+    h.update(str(df.head(100).to_dict()).encode())
+    return h.hexdigest()[:16]
+
+
 # =========================================================
-# 🌠 Núcleo simbiótico de features
+# 🌠 Núcleo simbiótico com cache
 # =========================================================
-def make_feats(df: pd.DataFrame):
+def make_feats(df: pd.DataFrame, cache_dir="cache_features", force=False):
+    """
+    Retorna (base, price) e salva automaticamente um cache.
+    - cache_dir: diretório onde os .npz serão salvos
+    - force: se True, recalcula mesmo se já existir cache válido
+    """
+
+    os.makedirs(cache_dir, exist_ok=True)
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
+    data_hash = hash_dataframe(df)
+    cache_file = os.path.join(cache_dir, f"features_{data_hash}.npz")
+    meta_file = cache_file.replace(".npz", ".json")
+
+    # 🔍 Se já existe cache válido
+    if not force and os.path.exists(cache_file):
+        data = np.load(cache_file)
+        base, price = data["base"], data["price"]
+        print(f"⚡ Cache simbiótico carregado: {cache_file} | base={base.shape}")
+        return base, price
+
+    print("🔄 Calculando features simbióticas (pode demorar alguns minutos)...")
+    start = time.time()
 
     # ===============================
     # 🔹 Retornos e volatilidade básica
@@ -103,4 +133,16 @@ def make_feats(df: pd.DataFrame):
     base = df[base_cols].astype(np.float32).values
     price = df["close"].astype(np.float32).values
 
+    # 💾 Salvar cache comprimido e metadados
+    np.savez_compressed(cache_file, base=base, price=price)
+    with open(meta_file, "w") as f:
+        json.dump({
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "hash": data_hash,
+            "n_samples": len(df),
+            "n_features": base.shape[1],
+            "duration_sec": round(time.time() - start, 2)
+        }, f, indent=2)
+
+    print(f"✅ Features simbióticas salvas em {cache_file} ({base.shape[0]}x{base.shape[1]})")
     return base, price
