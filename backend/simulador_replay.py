@@ -22,7 +22,7 @@ ALOCACAO = 0.9
 CUSTO_TRADE = 0.0004
 SAVE_RUNS = True
 RUNS_DIR = os.path.join("backend", "runs_replay")
-WINDOW = 20  # tamanho da janela de contexto (em candles)
+WINDOW = 60  # tamanho da janela de contexto (em candles)
 
 # =========================================================
 # ⚙️ Parâmetros simbióticos da estratégia (ajustáveis)
@@ -152,7 +152,7 @@ class SimuladorReplay:
 if __name__ == "__main__":
     async def main():
         replay = SimuladorReplay(
-            "/home/yuri/Documents/code2/binance-model/binance_BTC_USDT_15m_2y.csv"
+            "/home/yuri/Documents/code2/binance-model/binance_BTC_USDT_1h_2y.csv"
         )
         await replay.executar()
 
