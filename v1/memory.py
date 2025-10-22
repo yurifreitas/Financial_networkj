@@ -178,27 +178,44 @@ class NStepBuffer:
         return s0, a0, R, sn, done, y0
 
 
-# =========================================================
-# 💾 Estado seguro (salvamento atômico e tolerante a falhas)
-# =========================================================
 def salvar_estado(modelo, opt, replay, eps, media, path=None):
+    """
+    Salva o estado simbiótico completo de forma atômica e compatível com torch.compile().
+    """
     path = path or SAVE_PATH
     tmp_path = path + ".tmp"
 
     try:
-        torch.save({
-            "modelo": modelo.state_dict(),
+        # 🔍 Corrige o caso de modelo compilado (torch.compile encapsula _orig_mod)
+        to_save = modelo
+        if hasattr(modelo, "_orig_mod"):
+            to_save = modelo._orig_mod
+
+        # 💾 Conteúdo simbiótico do estado
+        state = {
+            "modelo": to_save.state_dict(),
             "opt": opt.state_dict() if opt is not None else None,
             "eps": float(eps),
             "media": float(media or 0),
-        }, tmp_path)
+            "info": {
+                "torch_version": torch.__version__,
+                "device": str(next(to_save.parameters()).device),
+            }
+        }
+
+        # 💽 Salvamento atômico
+        torch.save(state, tmp_path, _use_new_zipfile_serialization=False)
         os.replace(tmp_path, path)
-        print(f"💾 Estado salvo com sucesso em {path}")
+        print(f"💾 Estado simbiótico salvo com sucesso em: {path}")
+
     except Exception as e:
-        print(f"⚠️ Erro ao salvar estado: {e}")
+        print(f"⚠️ Erro ao salvar estado simbiótico: {e}")
 
 
 def carregar_estado(modelo, opt, path=None, state_dim=10):
+    """
+    Carrega estado simbiótico tolerante a falhas, corrigindo prefixos _orig_mod.
+    """
     path = path or SAVE_PATH
     if not os.path.exists(path):
         print("⚙️ Nenhum estado salvo encontrado, iniciando do zero.")
@@ -206,13 +223,24 @@ def carregar_estado(modelo, opt, path=None, state_dim=10):
 
     try:
         data = torch.load(path, map_location="cpu")
-        modelo.load_state_dict(data.get("modelo", {}), strict=False)
-        if opt is not None and "opt" in data:
+        state = data.get("modelo", {})
+
+        # 🧩 Corrige prefixos do torch.compile
+        fixed_state = {k.replace("_orig_mod.", ""): v for k, v in state.items()}
+
+        modelo.load_state_dict(fixed_state, strict=False)
+
+        if opt is not None and "opt" in data and data["opt"] is not None:
             opt.load_state_dict(data["opt"])
 
         eps = float(data.get("eps", EPSILON_INICIAL))
         media = float(data.get("media", 0.0))
-        print(f"♻️ Estado carregado | ε={eps:.3f} | média={media:+.3f}")
+
+        meta = data.get("info", {})
+        if meta:
+            print(f"🔍 Checkpoint info: Torch {meta.get('torch_version')} | device={meta.get('device')}")
+
+        print(f"♻️ Estado simbiótico carregado | ε={eps:.3f} | média={media:+.3f}")
         return RingReplay(state_dim, device="cpu"), eps, media
 
     except Exception as e:

@@ -3,6 +3,7 @@ from env import Env, make_feats
 from v1.memory import RingReplay, NStepBuffer, salvar_estado, carregar_estado
 from v1.setup import *
 import os, json, time
+from v1.noise import RuidoColepax
 import gc
 # Função para carregar o melhor patrimônio global
 def carregar_patrimonio_global():
@@ -145,117 +146,112 @@ while True:
 
         can_train =  total_steps % 15_000 == 0
 
+        # ==========================================================
+        # 🧬 Ciclo de Treino com Ruído Colepax + Fase Temporal
+        # ==========================================================
         if can_train:
-            # Amostragem do replay buffer
-            (estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t, idx, w, y_ret_t) = replay.sample(BATCH)
+            N_TREINOS = 1_000
+            ruido = RuidoColepax(base_intensity=0.03, fractal_layers=4, device=DEVICE.type)
+            fase_temporal = 0.0
+            print(f"\n🌌 Ciclo Colepax iniciado ({N_TREINOS} iterações)\n")
 
-            # Liberar memória não utilizada da GPU
-            torch.cuda.empty_cache()  # Limpa a memória não utilizada
+            for t in range(N_TREINOS):
+                ruido.step_update()
+                fase_temporal += 0.0073  # Fase oscilatória simbiótica
+                if t % 200 == 0:
+                    torch.cuda.empty_cache()
 
-            # Não usar CUDA Graphs aqui, vamos apenas realizar o cálculo diretamente
-            # Captura do gráfico CUDA
-            with torch.no_grad():
-                # Evitar a sobrescrição dos tensores de saída
-                next_q_online, _ = modelo(novos_estados_t)
-                next_q_target, _ = alvo(novos_estados_t)
+                # Amostragem simbiótica do replay buffer
+                (estados_t, acoes_t, recompensas_t, novos_estados_t, finais_t, idx, w, y_ret_t) = replay.sample(BATCH)
 
-                # Clonando os tensores fora do gráfico para evitar sobrescrita
-                next_q_online = next_q_online.clone().clamp_(-Q_CLAMP, Q_CLAMP)
-                next_q_target = next_q_target.clone().clamp_(-Q_CLAMP, Q_CLAMP)
+                # 🌊 Perturbação simbiótica leve (autoexploração)
+                if torch.rand(1).item() < 0.05:
+                    freq = 0.5 + 0.5 * math.sin(fase_temporal)
+                    estados_t += freq * 0.001 * torch.randn_like(estados_t)
+                    novos_estados_t += freq * 0.001 * torch.randn_like(novos_estados_t)
 
-                next_actions = torch.argmax(next_q_online, dim=1, keepdim=True)
-                next_best = next_q_target.gather(1, next_actions).squeeze(1)
-                alvo_q = recompensas_t + (GAMMA ** N_STEP) * next_best * (1.0 - finais_t)
-                alvo_q = alvo_q.clone().clamp_(-Q_TARGET_CLAMP, Q_TARGET_CLAMP)
-
-            # Resetando gradientes após o cálculo do forward pass
-            opt.zero_grad(set_to_none=True)
-
-            # Cálculo do forward pass para o modelo (congelamento de gradientes)
-            with autocast(device_type="cuda", enabled=AMP):
-                q_vals, y_pred = modelo(estados_t)
-                q_vals = q_vals.clamp_(-Q_CLAMP, Q_CLAMP)
-                q_sel = q_vals.gather(1, acoes_t).squeeze(1)
-
-                # Congelamento do modelo de regressão no início do treinamento
-                do_reg = total_steps >= REG_FREEZE_STEPS
-
-                # Tratar valores de retorno (y_ret_t) para evitar NaN ou Inf
-                y_ret_t = torch.nan_to_num(y_ret_t, nan=0.0, posinf=0.0, neginf=0.0)
-                y_target = y_ret_t.clamp_(-Y_CLAMP, Y_CLAMP) / Y_CLAMP
-
-                # Cálculo das perdas
-                loss_q = loss_q_hibrida(q_sel, alvo_q)
-                loss_reg = loss_regressao(y_pred, y_target) if do_reg else torch.zeros_like(loss_q)
-
-                # Atualização das médias exponenciais (EMA)
-                if ema_q is None:
-                    ema_q, ema_r = float(loss_q.item()), float(loss_reg.item())
-                ema_q = 0.98 * ema_q + 0.02 * float(loss_q.item())
-                ema_r = 0.98 * ema_r + 0.02 * float(loss_reg.item())
-
-                # Regularização dinâmica (lambda)
-                lambda_eff = LAMBDA_REG_BASE * max(0.3, min(2.0, (ema_q + 1e-3) / (ema_r + 1e-3)))
-                loss_total = loss_q + lambda_eff * loss_reg
-
-            # Proteção contra perda anômala e ajustes dinâmicos
-            if is_bad_number(loss_total) or abs(loss_total.item()) > LOSS_GUARD:
-                cooldown_until = total_steps + COOLDOWN_STEPS
-
-                if last_good is not None and rollbacks < MAX_ROLLBACKS:
-                    modelo.load_state_dict(last_good["model"], strict=False)
-                    alvo.load_state_dict(last_good["target"], strict=False)
-                    try:
-                        opt.load_state_dict(last_good["opt"])
-                    except Exception:
-                        pass
-                    EPSILON = max(EPSILON, last_good.get("eps", EPSILON))
-                    lr_now = max(min(last_good.get("lr", lr_now) * 0.7, LR), LR_MIN)
-                    set_lr(opt, lr_now)
-                    temp_now = max(TEMP_MIN, min(TEMP_INI, last_good.get("temp", temp_now)))
-                    rollbacks += 1
-                    print(
-                        f"⚠ Reset simbiótico com rollback #{rollbacks} | LR={lr_now:.6f} | cooldown até {cooldown_until}")
-                else:
-                    lr_now = max(lr_now * 0.5, LR_MIN)
-                    set_lr(opt, lr_now)
-                    EPSILON = min(1.0, EPSILON * 1.02)
-                    temp_now = min(TEMP_INI, temp_now * 1.02)
-                    print(f"⚠ Reset simbiótico (sem rollback) | novo LR={lr_now:.6f} | cooldown até {cooldown_until}")
-
-                # Resetando gradientes e criando novo GradScaler
-                opt.zero_grad(set_to_none=True)
-                for p in modelo.parameters():
-                    if p.grad is not None:
-                        p.grad.detach_()
-                        p.grad.zero_()
-                scaler = GradScaler("cuda", enabled=AMP)
-
-            else:
-                # Realiza a atualização do modelo
-                scaler.scale(loss_total).backward()
-                torch.nn.utils.clip_grad_norm_(modelo.parameters(), GRAD_CLIP)
-                scaler.step(opt)
-                scaler.update()
-
-                # Atualiza as prioridades no buffer de replay
                 with torch.no_grad():
-                    td_error = (alvo_q - q_sel).abs().clamp_(0, 5.0).detach().cpu().numpy()
-                    replay.update_priority(idx, td_error)
+                    next_q_online, _ = modelo(novos_estados_t)
+                    next_q_target, _ = alvo(novos_estados_t)
+                    next_q_online = next_q_online.clone().clamp_(-Q_CLAMP, Q_CLAMP)
+                    next_q_target = next_q_target.clone().clamp_(-Q_CLAMP, Q_CLAMP)
 
-                    # Ajusta o valor de tau para o soft update
-                    loss_scalar = float(loss_q.item())
-                    tau = min(0.01, TARGET_TAU_BASE * (1.0 + min(2.0, loss_scalar)))
-                    soft_update(alvo, modelo, tau)
+                    next_actions = torch.argmax(next_q_online, dim=1, keepdim=True)
+                    next_best = next_q_target.gather(1, next_actions).squeeze(1)
+                    alvo_q = recompensas_t + (GAMMA ** N_STEP) * next_best * (1.0 - finais_t)
+                    alvo_q = alvo_q.clone().clamp_(-Q_TARGET_CLAMP, Q_TARGET_CLAMP)
 
-                    if total_steps % HARD_SYNC_EVERY == 0:
-                        alvo.load_state_dict(modelo.state_dict())
+                opt.zero_grad(set_to_none=True)
 
-                last_loss = float(loss_total.item()) if torch.isfinite(loss_total) else last_loss
-                last_y_pred = float(y_pred[-1].item()) if 'y_pred' in locals() else last_y_pred
+                with autocast(device_type="cuda", enabled=AMP):
+                    q_vals, y_pred = modelo(estados_t)
 
-            # Liberar a memória GPU após o treinamento de cada iteração
-            torch.cuda.empty_cache()  # Limpar a memória não utilizada
+                    # ==========================================================
+                    # 🔮 Ruído Colepax + Ruído Temporal de Fase
+                    # ==========================================================
+                    fase_ruido = 1.0 + 0.25 * math.sin(fase_temporal * 2.0)
+                    ruido.base_intensity = 0.03 * fase_ruido
+                    q_vals = ruido.aplicar(q_vals, modo="mix")
+                    y_pred = ruido.aplicar(y_pred, modo="fractal")
+
+                    q_sel = q_vals.gather(1, acoes_t).squeeze(1).clamp_(-Q_CLAMP, Q_CLAMP)
+
+                    do_reg = total_steps >= REG_FREEZE_STEPS
+                    y_ret_t = torch.nan_to_num(y_ret_t, nan=0.0, posinf=0.0, neginf=0.0)
+                    y_target = y_ret_t.clamp_(-Y_CLAMP, Y_CLAMP) / Y_CLAMP
+
+                    loss_q = loss_q_hibrida(q_sel, alvo_q)
+                    loss_reg = loss_regressao(y_pred, y_target) if do_reg else torch.zeros_like(loss_q)
+
+                    if ema_q is None:
+                        ema_q, ema_r = float(loss_q.item()), float(loss_reg.item())
+                    ema_q = 0.98 * ema_q + 0.02 * float(loss_q.item())
+                    ema_r = 0.98 * ema_r + 0.02 * float(loss_reg.item())
+
+                    lambda_eff = LAMBDA_REG_BASE * max(0.3, min(2.0, (ema_q + 1e-3) / (ema_r + 1e-3)))
+
+                    # 🌐 Penalização energética simbiótica
+                    pen_energia = sum((p ** 2).mean() * 1e-5 for p in modelo.parameters())
+
+                    # 💠 Ruído de fase temporal (entre batches)
+                    fase_ruido_temporal = 0.5 * math.sin(fase_temporal * 3.14)
+                    loss_total = loss_q + lambda_eff * loss_reg + pen_energia
+                    loss_total = loss_total * (1.0 + fase_ruido_temporal * 0.05)
+
+                # Proteção simbiótica contra perda anômala
+                if is_bad_number(loss_total) or abs(loss_total.item()) > LOSS_GUARD:
+                    cooldown_until = total_steps + COOLDOWN_STEPS
+                    print(f"⚠ Reset simbiótico ativado | perda={loss_total.item():.4f}")
+                    opt.zero_grad(set_to_none=True)
+                    for p in modelo.parameters():
+                        if p.grad is not None:
+                            p.grad.detach_()
+                            p.grad.zero_()
+                    scaler = GradScaler("cuda", enabled=AMP)
+                else:
+                    scaler.scale(loss_total).backward()
+                    torch.nn.utils.clip_grad_norm_(modelo.parameters(), GRAD_CLIP)
+                    scaler.step(opt)
+                    scaler.update()
+
+                    # Atualiza prioridades e soft update
+                    with torch.no_grad():
+                        td_error = (alvo_q - q_sel).abs().clamp_(0, 5.0).detach().cpu().numpy()
+                        replay.update_priority(idx, td_error)
+
+                        loss_scalar = float(loss_q.item())
+                        tau = min(0.01, TARGET_TAU_BASE * (1.0 + min(2.0, loss_scalar)))
+                        soft_update(alvo, modelo, tau)
+                        if total_steps % HARD_SYNC_EVERY == 0:
+                            alvo.load_state_dict(modelo.state_dict())
+
+                # 🔭 Log simbiótico a cada 100 steps
+                if t % 100 == 0:
+                    print(f"[t={t:04d}] perda={loss_total.item():.6f} | "
+                        f"ruído={ruido.current_intensity:.4f} | fase={fase_ruido:.3f} | λ={lambda_eff:.3f}")
+
+            torch.cuda.empty_cache()
+            total_steps += N_TREINOS
 
         # =================================================
         # 🌿 Manutenção simbiótica
