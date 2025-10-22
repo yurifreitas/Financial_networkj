@@ -1,16 +1,13 @@
 # =========================================================
-# 🌌 EtherSym Finance — features_env_v3_unificado.py
+# 🌌 EtherSym Finance — features_env_v15.py
 # =========================================================
-# - Mantém o mesmo formato de saída do modelo original
-# - Inclui todos os indicadores simbióticos avançados
-# - Totalmente compatível com Env e RedeAvancada (sem ajustes)
+# - 15 features simbióticas vivas: estatísticas, técnicas, fractais e energéticas
+# - Compatível com o ambiente Env simbiótico
+# - Otimizado para grandes volumes e treino contínuo
 # =========================================================
 
 import numpy as np
 import pandas as pd
-
-# === Indicadores internos ===
-from indicators.statistical.hurst import compute as hurst
 from indicators.statistical.shannon_entropy import compute as shannon_entropy
 from indicators.statistical.kurtosis import compute as kurtosis
 from indicators.signal_energy.wavelet_transform import compute as wavelet_energy
@@ -18,94 +15,93 @@ from indicators.technical.macd import compute as macd
 from indicators.technical.rsi import compute as rsi
 from indicators.technical.trix import compute as trix
 from indicators.fractal_chaos.mfdfa import compute as multifractal_dfa
+from indicators.statistical.hurst import compute as hurst
 
 
 # =========================================================
-# 🧩 Função principal
+# 🧩 Núcleo simbiótico principal
 # =========================================================
 def make_feats(df: pd.DataFrame):
-    df = df.copy()
     df.columns = [c.lower() for c in df.columns]
 
-    # ===============================
-    # 🔹 Retornos e volatilidade
-    # ===============================
+    # =====================================================
+    # 🔹 Núcleo base
+    # =====================================================
     df["ret"] = df["close"].pct_change().fillna(0.0)
     df["vol_ret"] = df["ret"].rolling(24).std().fillna(0.0)
-
-    # ===============================
-    # 🔹 Médias móveis e RSI simbiótico
-    # ===============================
     df["ema_fast"] = df["close"].ewm(span=12).mean()
     df["ema_slow"] = df["close"].ewm(span=26).mean()
     df["ema_diff"] = (df["ema_fast"] - df["ema_slow"]) / (df["close"] + 1e-9)
 
-    delta = df["close"].diff()
-    up = delta.clip(lower=0).ewm(alpha=1 / 14).mean()
-    down = (-delta.clip(upper=0)).ewm(alpha=1 / 14).mean()
-    rsi_base = 100 - (100 / (1 + up / (down + 1e-9)))
-    df["rsi_n"] = (rsi_base - 50) / 50
+    # =====================================================
+    # 🔹 RSI simbiótico (normalizado -1 → +1)
+    # =====================================================
+    rsi_vals = rsi(df["close"].values, period=14)
+    df["rsi_n"] = (rsi_vals - 50) / 50
+    df["rsi_n"] = np.clip(np.nan_to_num(df["rsi_n"], nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0)
 
-    # ===============================
-    # 🔹 Corpo e amplitude das velas
-    # ===============================
+    # =====================================================
+    # 🔹 Estrutura de candle e volume
+    # =====================================================
     df["range"] = (df["high"] - df["low"]) / (df["close"] + 1e-9)
     df["body"] = (df["close"] - df["open"]) / ((df["high"] - df["low"]) + 1e-9)
+    df["volume_z"] = ((df["volume"] - df["volume"].rolling(48).mean()) /
+                      (df["volume"].rolling(48).std() + 1e-9)).fillna(0.0)
+    roll = df["close"].rolling(48)
+    df["z"] = ((df["close"] - roll.mean()) / (roll.std() + 1e-9)).fillna(0.0)
 
-    # ===============================
-    # 🔹 Indicadores técnicos adicionais
-    # ===============================
-    _, _, macd_hist = macd(df["close"].values)
-    df["macd_hist"] = macd_hist
-    df["trix"] = trix(df["close"].values, period=15)
+    # =====================================================
+    # 🔹 Indicadores técnicos (MACD / TRIX)
+    # =====================================================
+    macd_line, signal_line, macd_hist = macd(df["close"].values)
+    df["macd_hist"] = np.clip(np.nan_to_num(macd_hist, nan=0.0), -5.0, 5.0)
+    df["trix"] = np.clip(np.nan_to_num(trix(df["close"].values, period=15), nan=0.0), -5.0, 5.0)
 
-    # ===============================
-    # 🔹 Indicadores estatísticos e fractais
-    # ===============================
-    df["hurst"] = df["close"].rolling(200).apply(lambda x: hurst(x).mean(), raw=False)
-    df["entropy"] = df["close"].rolling(200).apply(lambda x: shannon_entropy(x).mean(), raw=False)
-    df["kurtosis"] = df["close"].rolling(200).apply(lambda x: kurtosis(x).mean(), raw=False)
+    # =====================================================
+    # 🔹 Estatísticos e fractais
+    # =====================================================
+    hurst_vals = hurst(df["close"].values, window=70)
+    df["hurst"] = np.clip(np.nan_to_num(hurst_vals - 1.0, nan=0.0), -1.0, 1.0)
+
+    df["entropy"] = df["close"].rolling(120).apply(lambda x: shannon_entropy(x), raw=False)
+    df["entropy"] = np.clip(np.nan_to_num(df["entropy"], nan=0.0), -1.0, 1.0)
+
+    df["kurtosis"] = df["close"].rolling(120).apply(lambda x: kurtosis(x), raw=False)
+    df["kurtosis"] = np.clip(np.nan_to_num(df["kurtosis"], nan=0.0), -1.0, 1.0)
+
+    # =====================================================
+    # 🔹 Energia simbiótica de sinal (Wavelet Energy)
+    # =====================================================
+    df["wave_energy"] = df["close"].rolling(256).apply(lambda x: wavelet_energy(x), raw=False)
+    df["wave_energy"] = np.clip(np.nan_to_num(df["wave_energy"], nan=0.0), -5.0, 5.0)
+
+    # =====================================================
+    # 🔹 Multifractalidade local (MF-DFA)
+    # =====================================================
     df["mfdfa"] = df["close"].rolling(300).apply(
         lambda x: multifractal_dfa(x).get("dfa_alpha", np.nan), raw=False
     )
+    df["mfdfa"] = np.clip(np.nan_to_num(df["mfdfa"], nan=0.0), -2.0, 2.0)
 
-    # ===============================
-    # 🔹 Energia de sinal (Wavelet)
-    # ===============================
-    df["wave_energy"] = df["close"].rolling(256).apply(lambda x: wavelet_energy(x), raw=False)
+    # =====================================================
+    # 🔹 Limpeza e montagem simbiótica
+    # =====================================================
+    df = df.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
 
-    # ===============================
-    # 🔹 Volume e desvio Z
-    # ===============================
-    roll = df["close"].rolling(48)
-    df["z"] = ((df["close"] - roll.mean()) / (roll.std() + 1e-9)).fillna(0.0)
-    df["volume_z"] = ((df["volume"] - df["volume"].rolling(48).mean()) /
-                      (df["volume"].rolling(48).std() + 1e-9)).fillna(0.0)
+    base_cols = [
+        "ret", "vol_ret", "range", "body", "ema_diff",
+        "rsi_n", "z", "volume_z", "macd_hist", "trix",
+        "hurst", "entropy", "kurtosis", "wave_energy", "mfdfa"
+    ]
 
-    # ===============================
-    # 🔹 Limpeza e normalização
-    # ===============================
-    df = df.replace([np.inf, -np.inf], np.nan).fillna(method="bfill").fillna(method="ffill")
-    df = df.dropna().reset_index(drop=True)
-
-    # =========================================================
-    # 🌠 Vetor final — formato idêntico ao antigo (8 colunas)
-    # =========================================================
-    # Os novos indicadores são incorporados nas existentes via modulação simbiótica
-    df["range"] *= (1 + 0.05 * df["wave_energy"].fillna(0))
-    df["vol_ret"] *= (1 + 0.02 * df["hurst"].fillna(0))
-    df["rsi_n"] *= (1 + 0.03 * df["entropy"].fillna(0))
-    df["ema_diff"] *= (1 + 0.01 * df["macd_hist"].fillna(0))
-    df["body"] *= (1 + 0.02 * df["mfdfa"].fillna(0))
-    df["z"] *= (1 + 0.01 * df["kurtosis"].fillna(0))
-
-    # 🔹 Retorno simbiótico final (8 features + preço)
-    base = df[[
-        "ret", "vol_ret", "range", "body",
-        "ema_diff", "rsi_n", "z", "volume_z"
-    ]].astype(np.float32).values
-
+    base = df[base_cols].astype(np.float32).values
     price = df["close"].astype(np.float32).values
 
-    print(f"✅ Features simbióticas geradas | shape base={base.shape}")
+    # =====================================================
+    # 🧠 Log simbiótico
+    # =====================================================
+    print(f"✅ base={base.shape} | price={price.shape}")
+    print(f"🧩 Indicadores simbióticos vivos: {len(base_cols)}")
+    print(f"📈 Colunas: {base_cols}")
+
     return base, price

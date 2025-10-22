@@ -28,7 +28,7 @@ def carregar_modelo(device="cuda"):
     print(f"🧩 Carregando modelo simbiótico de: {STATE_PATH}")
 
     # Inicializa estrutura base
-    modelo = RedeAvancada(state_dim=10, n_actions=3).to(device)
+    modelo = RedeAvancada(state_dim=11, n_actions=3).to(device)
 
     # =========================================================
     # 🧬 Carregamento seguro compatível (PyTorch 2.9)

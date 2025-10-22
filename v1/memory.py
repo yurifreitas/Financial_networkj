@@ -198,7 +198,7 @@ def salvar_estado(modelo, opt, replay, eps, media, path=None):
         print(f"⚠️ Erro ao salvar estado: {e}")
 
 
-def carregar_estado(modelo, opt=None, path=None, state_dim=10, device="cpu"):
+def carregar_estado(modelo, opt=None, path=None, state_dim=15, device="cpu"):
     """
     🔁 Carrega estado simbiótico compatível com PyTorch 2.9 (weights_only desativado).
     Totalmente seguro para checkpoints próprios.

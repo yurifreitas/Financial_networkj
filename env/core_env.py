@@ -40,7 +40,12 @@ class Env:
         self.n = len(price)
 
         self.window_min = 20
-        self.window_max = self.n - 800
+        self.window_max = max(self.window_min + 1, self.n - 800)
+
+        if self.window_max <= self.window_min:
+            logging.warning(f"[Env] Dataset curto demais ({self.n} candles). Ajustando janelas automaticamente.")
+            self.window_min = 0
+            self.window_max = max(1, self.n - 2)
 
         vol = np.abs(np.diff(self.p))
         self._vol = vol / (vol.sum() + 1e-9)
@@ -67,7 +72,11 @@ class Env:
             if START_MODE == "volatility":
                 idxs = np.arange(self.window_min, self.window_max)
                 p = self._vol[self.window_min:self.window_max]
-                self.t = int(np.random.choice(idxs, p=p / (p.sum() + 1e-12)))
+                if len(idxs) == 0 or p.sum() == 0:
+                    logging.warning("[Env] idxs ou p vazio. Reposicionando aleatoriamente.")
+                    self.t = np.random.randint(0, max(1, self.n - 1))
+                else:
+                    self.t = int(np.random.choice(idxs, p=p / (p.sum() + 1e-12)))
             else:
                 self.t = np.random.randint(self.window_min, self.window_max)
         else:

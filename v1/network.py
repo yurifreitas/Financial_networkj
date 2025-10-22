@@ -17,7 +17,7 @@ import numpy as np
 # 🧩 Núcleo da rede simbiótica
 # =========================================================
 class RedeAvancada(nn.Module):
-    def __init__(self, state_dim=10, n_actions=3):
+    def __init__(self, state_dim=15, n_actions=3):
         super().__init__()
 
         # === Backbone simbiótico ===
