@@ -24,7 +24,7 @@ import time, os
 # ⚙️ Configurações principais
 # -----------------------------
 SYMBOL = "BTC/USDT"       # Par de criptomoedas
-TIMEFRAME = "1h"          # Pode usar "15m", "4h", "1d", etc.
+TIMEFRAME = "15m"          # Pode usar "15m", "4h", "1d", etc.
 YEARS = 2                 # Quantos anos de histórico baixar
 CSV_PATH = f"binance_{SYMBOL.replace('/','_')}_{TIMEFRAME}_{YEARS}y.csv"
 

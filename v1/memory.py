@@ -178,72 +178,68 @@ class NStepBuffer:
         return s0, a0, R, sn, done, y0
 
 
+# =========================================================
+# 💾 Estado seguro (salvamento atômico e tolerante a falhas)
+# =========================================================
 def salvar_estado(modelo, opt, replay, eps, media, path=None):
-    """
-    Salva o estado simbiótico completo de forma atômica e compatível com torch.compile().
-    """
     path = path or SAVE_PATH
     tmp_path = path + ".tmp"
 
     try:
-        # 🔍 Corrige o caso de modelo compilado (torch.compile encapsula _orig_mod)
-        to_save = modelo
-        if hasattr(modelo, "_orig_mod"):
-            to_save = modelo._orig_mod
-
-        # 💾 Conteúdo simbiótico do estado
-        state = {
-            "modelo": to_save.state_dict(),
+        torch.save({
+            "modelo": modelo.state_dict(),
             "opt": opt.state_dict() if opt is not None else None,
             "eps": float(eps),
             "media": float(media or 0),
-            "info": {
-                "torch_version": torch.__version__,
-                "device": str(next(to_save.parameters()).device),
-            }
-        }
-
-        # 💽 Salvamento atômico
-        torch.save(state, tmp_path, _use_new_zipfile_serialization=False)
+        }, tmp_path)
         os.replace(tmp_path, path)
-        print(f"💾 Estado simbiótico salvo com sucesso em: {path}")
-
+        print(f"💾 Estado salvo com sucesso em {path}")
     except Exception as e:
-        print(f"⚠️ Erro ao salvar estado simbiótico: {e}")
+        print(f"⚠️ Erro ao salvar estado: {e}")
 
 
-def carregar_estado(modelo, opt, path=None, state_dim=10):
+def carregar_estado(modelo, opt=None, path=None, state_dim=10, device="cpu"):
     """
-    Carrega estado simbiótico tolerante a falhas, corrigindo prefixos _orig_mod.
+    🔁 Carrega estado simbiótico compatível com PyTorch 2.9 (weights_only desativado).
+    Totalmente seguro para checkpoints próprios.
     """
     path = path or SAVE_PATH
     if not os.path.exists(path):
         print("⚙️ Nenhum estado salvo encontrado, iniciando do zero.")
-        return RingReplay(state_dim, device="cpu"), EPSILON_INICIAL, 0.0
+        return RingReplay(state_dim, device=device), EPSILON_INICIAL, 0.0
 
     try:
-        data = torch.load(path, map_location="cpu")
+        # 🚀 PyTorch 2.9 exige desativar o modo seguro manualmente
+        data = torch.load(path, map_location=device, weights_only=False)
+
+        # 📦 Carrega pesos e metadados
         state = data.get("modelo", {})
-
-        # 🧩 Corrige prefixos do torch.compile
         fixed_state = {k.replace("_orig_mod.", ""): v for k, v in state.items()}
+        missing, unexpected = modelo.load_state_dict(fixed_state, strict=False)
 
-        modelo.load_state_dict(fixed_state, strict=False)
+        if missing:
+            print(f"⚠️ {len(missing)} parâmetros faltando no modelo")
+        if unexpected:
+            print(f"⚠️ {len(unexpected)} chaves extras no checkpoint")
 
-        if opt is not None and "opt" in data and data["opt"] is not None:
+        if opt is not None and data.get("opt") is not None:
             opt.load_state_dict(data["opt"])
 
         eps = float(data.get("eps", EPSILON_INICIAL))
         media = float(data.get("media", 0.0))
 
         meta = data.get("info", {})
-        if meta:
-            print(f"🔍 Checkpoint info: Torch {meta.get('torch_version')} | device={meta.get('device')}")
-
         print(f"♻️ Estado simbiótico carregado | ε={eps:.3f} | média={media:+.3f}")
-        return RingReplay(state_dim, device="cpu"), eps, media
+        print(f"🔍 Torch {meta.get('torch_version', '?')} | device={meta.get('device', device)}")
+
+        # 🔬 Verificação simbiótica
+        with torch.no_grad():
+            w_mean = modelo.fc1.weight.abs().mean().item() if hasattr(modelo, 'fc1') else 0
+            print(f"🧠 Integridade dos pesos: |fc1| médio = {w_mean:.6f}")
+
+        return RingReplay(state_dim, device=device), eps, media
 
     except Exception as e:
-        print(f"⚠️ Erro ao carregar estado ({type(e).__name__}): {e}")
+        print(f"⚠️ Falha ao carregar checkpoint ({type(e).__name__}): {e}")
         print("🔄 Reiniciando do zero (arquivo pode estar corrompido).")
-        return RingReplay(state_dim, device="cpu"), EPSILON_INICIAL, 0.0
+        return RingReplay(state_dim, device=device), EPSILON_INICIAL, 0.0
