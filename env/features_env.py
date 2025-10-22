@@ -63,10 +63,16 @@ def make_feats(df: pd.DataFrame):
     hurst_vals = hurst(df["close"].values, window=70)
     df["hurst"] = np.clip(np.nan_to_num(hurst_vals - 1.0, nan=0.0), -1.0, 1.0)
 
-    df["entropy"] = df["close"].rolling(120).apply(lambda x: shannon_entropy(x), raw=False)
+    df["entropy"] = df["close"].rolling(120).apply(
+        lambda x: np.nanmean(shannon_entropy(x)), raw=False
+    )
+
     df["entropy"] = np.clip(np.nan_to_num(df["entropy"], nan=0.0), -1.0, 1.0)
 
-    df["kurtosis"] = df["close"].rolling(120).apply(lambda x: kurtosis(x), raw=False)
+    df["kurtosis"] = df["close"].rolling(120).apply(
+        lambda x: float(np.nanmean(kurtosis(x))), raw=False
+    )
+
     df["kurtosis"] = np.clip(np.nan_to_num(df["kurtosis"], nan=0.0), -1.0, 1.0)
 
     # =====================================================
