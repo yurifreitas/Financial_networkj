@@ -248,7 +248,7 @@ class Env:
         # =====================================================
         # 🏆 Condição de Vitória — Patrimônio Duplicado
         # =====================================================
-        FATOR_VITORIA = 3.5  # dobra o capital inicial
+        FATOR_VITORIA = 20  # dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             logging.info(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {self.episodios + 1}")

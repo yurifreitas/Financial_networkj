@@ -100,7 +100,7 @@ while True:
         s = sp
         done = done_env
 
-        FATOR_VITORIA = 3.5  # Dobra o capital inicial
+        FATOR_VITORIA = 20  # Dobra o capital inicial
         if patrimonio >= FATOR_VITORIA * CAPITAL_INICIAL:
             done_env = True
             print(f"🏆 Vitória simbiótica! Patrimônio dobrado ({patrimonio:.2f}) no episódio {episodio}")
@@ -146,7 +146,7 @@ while True:
                 "temp": float(temp_now),
             }
 
-        can_train =  total_steps % 200_000 == 0
+        can_train =  total_steps % 20_000 == 0
 
         # ==========================================================
         # 🧬 Ciclo de Treino com Ruído Colepax + Fase Temporal
