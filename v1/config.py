@@ -15,7 +15,7 @@ GAMMA = 0.99                   # fator de desconto
 BATCH = 512                   # tamanho do batch
 MEMORIA_MAX = 16384            # capacidade máxima do replay
 MIN_REPLAY = 10000             # mínimo antes de treinar
-N_STEP = 3                     # N-step return
+N_STEP = 4                     # N-step return
 TARGET_TAU = 0.005             # soft update rate
 TARGET_SYNC_HARD = 10_000      # sincronização dura
 EPSILON_INICIAL = 0.5
@@ -47,7 +47,7 @@ FONTE = "DejaVuSans"
 # ⚙️ Hiperparâmetros principais
 # =========================================================
 CSV = "binance_BTC_USDT_1h_2y.csv"
-SEED = 12
+SEED = 39
 
 
 

@@ -24,7 +24,7 @@ import time, os
 # ⚙️ Configurações principais
 # -----------------------------
 SYMBOL = "BTC/USDT"      # Par de criptomoedas
-TIMEFRAME = "1h"         # Intervalo de candles (1 hora)
+TIMEFRAME = "15m"         # Intervalo de candles (1 hora)
 DAYS = 3                 # Quantos dias no passado buscar
 CSV_PATH = f"binance_{SYMBOL.replace('/','_')}_{TIMEFRAME}_{DAYS}d.csv"
 

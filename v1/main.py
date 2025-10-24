@@ -146,7 +146,7 @@ while True:
                 "temp": float(temp_now),
             }
 
-        can_train =  total_steps % 20_000 == 0
+        can_train =  total_steps % 5_000 == 0
 
         # ==========================================================
         # 🧬 Ciclo de Treino com Ruído Colepax + Fase Temporal
@@ -282,6 +282,7 @@ while True:
         # =================================================
         if (total_steps % PRINT_EVERY == 0) or done:
             energia = float(info.get("energia", 1.0))
+            r += 0.7  * (energia - 0.5)
             print(
                 f"[Ep {episodio:04d} | {total_steps:>8}] cap={capital:>9.2f} | pat={patrimonio:>9.2f} | "
                 f"max={max_patrimonio:>9.2f} | ε={eps_now:.3f} | τ={temp_now:.2f} | β={beta_per:.2f} | "

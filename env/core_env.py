@@ -16,7 +16,7 @@ from .config_env import (
 )
 
 PERSIST_PATH = "metrics_history.jsonl"   # histórico incremental longo
-FALENCIA_HARD = 300.0                    # limiar absoluto secundário
+FALENCIA_HARD = 500.0                    # limiar absoluto secundário
 VOL_WIN = 64                             # janela p/ vol local
 DD_WIN = 2048                            # janela p/ drawdown local
 

@@ -8,6 +8,7 @@
 import os
 import numpy as np
 import pandas as pd
+import hashlib
 from indicators.statistical.shannon_entropy import compute as shannon_entropy
 from indicators.statistical.kurtosis import compute as kurtosis
 from indicators.signal_energy.wavelet_transform import compute as wavelet_energy
@@ -18,11 +19,23 @@ from indicators.fractal_chaos.mfdfa import compute as multifractal_dfa
 from indicators.statistical.hurst import compute as hurst
 
 
-# =========================================================
-# 🧩 Núcleo simbiótico principal com cache integral
-# =========================================================
-def make_feats(df: pd.DataFrame, cache_dir: str = "cache_features", cache_name: str = "features_v15.parquet"):
+def make_feats(df: pd.DataFrame, cache_dir: str = "cache_features", cache_name: str = None):
     os.makedirs(cache_dir, exist_ok=True)
+
+    # =====================================================
+    # 🧬 Gera nome de cache único baseado no arquivo de origem ou conteúdo
+    # =====================================================
+    if cache_name is None:
+        # Se o DataFrame tiver um atributo 'source_file' (adicionado no SimuladorReplay)
+        if hasattr(df, "source_file") and df.source_file:
+            base_name = os.path.basename(df.source_file)
+        else:
+            # fallback — usa o número de linhas + hash
+            base_name = f"df_{len(df)}"
+        # hash curto para evitar nomes repetidos
+        hash_id = hashlib.md5(str(len(df)).encode()).hexdigest()[:6]
+        cache_name = f"features_{base_name}_{hash_id}.parquet"
+
     cache_path = os.path.join(cache_dir, cache_name)
 
     # =====================================================
@@ -45,7 +58,6 @@ def make_feats(df: pd.DataFrame, cache_dir: str = "cache_features", cache_name: 
                 print(f"⚠️ Cache inconsistente ({len(cached)} vs {len(df)}) — recalculando...")
         except Exception as e:
             print(f"⚠️ Erro ao carregar cache: {e}. Recalculando indicadores...")
-
     # =====================================================
     # 🧮 2️⃣ Recalcular tudo do zero (primeira vez)
     # =====================================================
